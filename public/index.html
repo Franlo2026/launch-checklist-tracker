@@ -164,6 +164,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   .page-header { flex-direction: column; align-items: flex-start; }
 }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -173,7 +174,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   'use strict';
 
   var STORES_DATA = {
-    "Western Cape": [{n:"Point Mall",f:"All Day Cafe"}, {n:"Kenilworth",f:"All Day Cafe"}, {n:"Kalk Bay",f:"All Day Cafe"}, {n:"Tokai",f:"All Day Cafe"}, {n:"Green Point",f:"All Day Cafe"}, {n:"Cape Quarter",f:"All Day Cafe"}, {n:"Century City",f:"All Day Cafe"}, {n:"Harrington Street",f:"All Day Cafe"}, {n:"Stellenbosch",f:"All Day Cafe"}, {n:"Claremont",f:"All Day Cafe"}, {n:"Bakoven",f:"All Day Cafe"}, {n:"Three Anchor Bay",f:"All Day Cafe"}, {n:"Woodstock Quarter",f:"All Day Cafe"}, {n:"112 Kloof Street",f:"All Day Cafe"}, {n:"Aquarium",f:"All Day Cafe"}, {n:"Gardens Centre",f:"All Day Cafe"}, {n:"Bree Street",f:"All Day Cafe"}, {n:"Blouberg",f:"All Day Cafe"}, {n:"Durbanville",f:"All Day Cafe"}, {n:"Vredehoek",f:"All Day Cafe"}, {n:"Frater Square",f:"All Day Cafe"}, {n:"Bridgewater",f:"All Day Cafe"}, {n:"Drakenstein Sentrum",f:"All Day Cafe"}, {n:"Table Bay Mall",f:"All Day Cafe"}, {n:"Somerset West",f:"All Day Cafe"}, {n:"Sandown Retail Crossing",f:"All Day Cafe"}, {n:"Strand Beach Road",f:"All Day Cafe"}, {n:"Meadowridge Park n Shop",f:"All Day Cafe"}, {n:"Dean Street",f:"All Day Cafe"}, {n:"Hartenbos",f:"All Day Cafe"}, {n:"Rosmead Avenue",f:"All Day Cafe"}, {n:"Gordon's Bay",f:"All Day Cafe"}, {n:"Clara Anna",f:"All Day Cafe"}, {n:"Ndabeni",f:"All Day Cafe"}, {n:"Franschhoek",f:"All Day Cafe"}, {n:"Hout Bay",f:"All Day Cafe"}, {n:"Canal Walk",f:"All Day Cafe"}, {n:"Yellowoods Centre",f:"All Day Cafe"}, {n:"Milkwood Square Centre",f:"All Day Cafe"}, {n:"Plattekloof Village",f:"All Day Cafe"}, {n:"Somerset Mall",f:"All Day Cafe"}, {n:"Paarden Eiland",f:"All Day Cafe"}, {n:"York Street",f:"All Day Cafe"}, {n:"Paarl Mall",f:"All Day Cafe"}, {n:"Haazendal Gables",f:"All Day Cafe"}, {n:"Brackenfell Corner",f:"XS"}, {n:"Sea Point",f:"XS"}, {n:"PineworX",f:"XS"}, {n:"Muizenberg",f:"XS"}, {n:"Salt River",f:"XS"}, {n:"Brooklyn Junction",f:"XS"}, {n:"N1 Value Centre",f:"XS"}, {n:"Foreshore",f:"XS"}, {n:"Paardevlei",f:"XS"}, {n:"Grandwest",f:"XS"}, {n:"Cape Gate",f:"XS"}, {n:"Westlake",f:"XS"}, {n:"Eikestad",f:"XS"}, {n:"Laguna Mall",f:"XS"}, {n:"Welgelee Plein",f:"XS"}, {n:"Sandkraal",f:"XS"}, {n:"Jetty Quarter",f:"XS"}, {n:"Aquarium Kiosk",f:"XS Kiosk"}, {n:"V&A Waterfront",f:"XS Kiosk"}, {n:"St Cyprian's",f:"XS Kiosk"}, {n:"Sea Point High",f:"XS Kiosk"}, {n:"Roamworx Floor 2 and 4",f:"XS Kiosk"}, {n:"Cavendish Mall Kiosk",f:"XS Kiosk"}, {n:"Riverlands",f:"XS Kiosk"}, {n:"N1 City Mall",f:"XS Kiosk"}, {n:"Hermanus",f:"XS Kiosk"}, {n:"Paarl Mall",f:"XS Petroleum/C-Store"}, {n:"Durbanville",f:"XS Petroleum/C-Store"}, {n:"Cavendish",f:"All Day Cafe"}],
+    "Western Cape": [{n:"Point Mall",f:"All Day Cafe"}, {n:"Kenilworth",f:"All Day Cafe"}, {n:"Kalk Bay",f:"All Day Cafe"}, {n:"Tokai",f:"All Day Cafe"}, {n:"Green Point",f:"All Day Cafe"}, {n:"Cape Quarter",f:"All Day Cafe"}, {n:"Century City",f:"All Day Cafe"}, {n:"Harrington Street",f:"All Day Cafe"}, {n:"Stellenbosch",f:"All Day Cafe"}, {n:"Claremont",f:"All Day Cafe"}, {n:"Bakoven",f:"All Day Cafe"}, {n:"Three Anchor Bay",f:"All Day Cafe"}, {n:"Woodstock Quarter",f:"All Day Cafe"}, {n:"112 Kloof Street",f:"All Day Cafe"}, {n:"Aquarium",f:"All Day Cafe"}, {n:"Gardens Centre",f:"All Day Cafe"}, {n:"Bree Street",f:"All Day Cafe"}, {n:"Blouberg",f:"All Day Cafe"}, {n:"Durbanville (All Day Caf\u00e9)",f:"All Day Cafe"}, {n:"Vredehoek",f:"All Day Cafe"}, {n:"Frater Square",f:"All Day Cafe"}, {n:"Bridgewater",f:"All Day Cafe"}, {n:"Drakenstein Sentrum",f:"All Day Cafe"}, {n:"Table Bay Mall",f:"All Day Cafe"}, {n:"Somerset West",f:"All Day Cafe"}, {n:"Sandown Retail Crossing",f:"All Day Cafe"}, {n:"Strand Beach Road",f:"All Day Cafe"}, {n:"Meadowridge Park n Shop",f:"All Day Cafe"}, {n:"Dean Street",f:"All Day Cafe"}, {n:"Hartenbos",f:"All Day Cafe"}, {n:"Rosmead Avenue",f:"All Day Cafe"}, {n:"Gordon's Bay",f:"All Day Cafe"}, {n:"Clara Anna",f:"All Day Cafe"}, {n:"Ndabeni",f:"All Day Cafe"}, {n:"Franschhoek",f:"All Day Cafe"}, {n:"Hout Bay",f:"All Day Cafe"}, {n:"Canal Walk",f:"All Day Cafe"}, {n:"Yellowoods Centre",f:"All Day Cafe"}, {n:"Milkwood Square Centre",f:"All Day Cafe"}, {n:"Plattekloof Village",f:"All Day Cafe"}, {n:"Somerset Mall",f:"All Day Cafe"}, {n:"Paarden Eiland",f:"All Day Cafe"}, {n:"York Street",f:"All Day Cafe"}, {n:"Paarl Mall (All Day Caf\u00e9)",f:"All Day Cafe"}, {n:"Haazendal Gables",f:"All Day Cafe"}, {n:"Brackenfell Corner",f:"XS"}, {n:"Sea Point",f:"XS"}, {n:"PineworX",f:"XS"}, {n:"Muizenberg",f:"XS"}, {n:"Salt River",f:"XS"}, {n:"Brooklyn Junction",f:"XS"}, {n:"N1 Value Centre",f:"XS"}, {n:"Foreshore",f:"XS"}, {n:"Paardevlei",f:"XS"}, {n:"Grandwest",f:"XS"}, {n:"Cape Gate",f:"XS"}, {n:"Westlake",f:"XS"}, {n:"Eikestad",f:"XS"}, {n:"Laguna Mall",f:"XS"}, {n:"Welgelee Plein",f:"XS"}, {n:"Sandkraal",f:"XS"}, {n:"Jetty Quarter",f:"XS"}, {n:"Aquarium Kiosk",f:"XS Kiosk"}, {n:"V&A Waterfront",f:"XS Kiosk"}, {n:"St Cyprian's",f:"XS Kiosk"}, {n:"Sea Point High",f:"XS Kiosk"}, {n:"Roamworx Floor 2 and 4",f:"XS Kiosk"}, {n:"Cavendish Mall Kiosk",f:"XS Kiosk"}, {n:"Riverlands",f:"XS Kiosk"}, {n:"N1 City Mall",f:"XS Kiosk"}, {n:"Hermanus",f:"XS Kiosk"}, {n:"Paarl Mall (Petroleum/C-Store)",f:"XS Petroleum/C-Store"}, {n:"Durbanville (Petroleum/C-Store)",f:"XS Petroleum/C-Store"}, {n:"Cavendish",f:"All Day Cafe"}],
     "Gauteng": [{n:"Ferndale on Republic",f:"All Day Cafe"}, {n:"Blueberry Square",f:"All Day Cafe"}, {n:"Chartwell Corner",f:"All Day Cafe"}, {n:"The Zone, Rosebank",f:"All Day Cafe"}, {n:"Norwood",f:"All Day Cafe"}, {n:"Grayston Shopping Centre",f:"All Day Cafe"}, {n:"Cresta Shopping Centre, Cresta",f:"All Day Cafe"}, {n:"Design Quarter, Fourways",f:"All Day Cafe"}, {n:"Irene Link, Irene",f:"All Day Cafe"}, {n:"Olivedale Corner",f:"All Day Cafe"}, {n:"Thatchfield Retail Centre",f:"All Day Cafe"}, {n:"Ridgeview",f:"All Day Cafe"}, {n:"Bedford Centre",f:"All Day Cafe"}, {n:"Karaglen",f:"All Day Cafe"}, {n:"Mushroom Farm",f:"All Day Cafe"}, {n:"Hyde Park",f:"All Day Cafe"}, {n:"Sandton Gate",f:"All Day Cafe"}, {n:"Three Rivers",f:"All Day Cafe"}, {n:"Douglasdale",f:"All Day Cafe"}, {n:"Parkhurst",f:"All Day Cafe"}, {n:"Sunninghill Village",f:"XS"}, {n:"Bram Fischer",f:"XS"}, {n:"Clearwater Mall",f:"XS"}, {n:"Delta Central",f:"XS"}, {n:"Mall of Africa",f:"XS"}, {n:"Woodmead XS",f:"XS"}, {n:"Alzu Rayton",f:"XS Petroleum/C-Store"}, {n:"Bedford Sqaure Planet Fitness",f:"XS Kiosk"}, {n:"Winchester Hill XS",f:"XS Petroleum/C-Store"}, {n:"Campbells",f:"XS Petroleum/C-Store"}, {n:"Sizan",f:"XS Petroleum/C-Store"}, {n:"Simmonds",f:"XS Petroleum/C-Store"}],
     "North West": [{n:"Mooirivier Mall, Potchefstroom",f:"All Day Cafe"}, {n:"Mafikeng",f:"XS Petroleum/C-Store"}, {n:"Cashan",f:"XS Petroleum/C-Store"}],
     "KZN": [{n:"Musgrave Centre",f:"All Day Cafe"}, {n:"The Pearls",f:"All Day Cafe"}, {n:"Gateway",f:"XS"}],
@@ -207,17 +208,17 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function defaultTemplate() {
     return {
       checklist_items: [
-        { id: 'it1', label: 'Posters displayed', requires_photo: true },
-        { id: 'it2', label: 'GAAP POS updated', requires_photo: false },
-        { id: 'it3', label: 'New retail price tags displayed', requires_photo: false },
-        { id: 'it4', label: 'All old collateral removed and discarded', requires_photo: false },
+        { id: 'it1', label: 'Posters displayed', requires_photo: true, input_type: 'yesno' },
+        { id: 'it2', label: 'GAAP POS updated', requires_photo: false, input_type: 'yesno' },
+        { id: 'it3', label: 'New retail price tags displayed', requires_photo: false, input_type: 'yesno' },
+        { id: 'it4', label: 'All outdated collateral has been removed and discarded', requires_photo: false, input_type: 'checkbox' },
       ],
       conditional: {
         enabled: true,
         trigger_label: 'Is this a CPT Non-Halal Hybrid store?',
         items: [
-          { id: 'ct1', label: 'Babylonstoren collateral displayed', requires_photo: true },
-          { id: 'ct2', label: 'Babylonstoren Bloodorange stock available', requires_photo: true },
+          { id: 'ct1', label: 'Babylonstoren collateral displayed', requires_photo: true, input_type: 'yesno' },
+          { id: 'ct2', label: 'Babylonstoren Bloodorange stock available', requires_photo: true, input_type: 'yesno' },
         ],
       },
     };
@@ -483,7 +484,9 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     app.innerHTML =
       '<div class="nav"><div class="logo">Bootlegger</div><div class="meta"><span class="link" id="backNav">&larr; Dashboard</span></div></div>' +
       '<div class="page">' +
-        '<div class="page-header"><div><h1>Insights</h1><div class="sub">Select a launch tracker to see submission insights</div></div></div>' +
+        '<div class="page-header"><div><h1>Insights</h1><div class="sub">Select a launch tracker to see submission insights</div></div>' +
+          '<button class="btn outline" id="pdfExportBtn" style="display:none;">Download PDF Report</button>' +
+        '</div>' +
         '<div class="card"><div class="field" style="margin-bottom:0;"><label>Launch Tracker</label><select id="insightPicker"><option value="">Loading…</option></select></div></div>' +
         '<div id="insightBody" style="margin-top:20px;"></div>' +
       '</div>';
@@ -493,15 +496,20 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       sel.innerHTML = '<option value="">Select a launch…</option>' +
         trackers.map(function (t) { return '<option value="' + t.id + '">' + esc(t.name) + (t.active ? '' : ' (Archived)') + '</option>'; }).join('');
       sel.onchange = function () {
-        if (sel.value) loadInsights(sel.value);
-        else document.getElementById('insightBody').innerHTML = '';
+        if (sel.value) { loadInsights(sel.value); document.getElementById('pdfExportBtn').style.display = 'inline-block'; }
+        else { document.getElementById('insightBody').innerHTML = ''; document.getElementById('pdfExportBtn').style.display = 'none'; }
       };
     });
   }
 
+  var currentInsightsData = null;
+
   function loadInsights(trackerId) {
     document.getElementById('insightBody').innerHTML = '<div class="empty-state">Loading…</div>';
     api('/trackers/' + trackerId + '/insights').then(function (d) {
+      currentInsightsData = d;
+      document.getElementById('pdfExportBtn').onclick = function () { exportInsightsPDF(d); };
+
       var scopeNote = d.totalAssigned === null
         ? '<div class="hint">This launch wasn\'t scoped to a specific format/café list, so "not yet submitted" can\'t be calculated — only submitted results are shown.</div>'
         : '';
@@ -530,24 +538,68 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           : '<div class="empty-state">No exemptions recorded for this launch.</div>') +
       '</div>';
 
-      function questionBlock(title, items) {
+      function questionBlock(title, items, isConditional) {
         if (!items.length) return '';
         return '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">' + esc(title) + '</div>' +
           items.map(function (q) {
             var flagged = q.noCount > 0 ? '<span class="pill flag">' + q.noCount + ' No</span>' : '<span class="pill up">All Yes</span>';
-            var noList = q.noCafes.length ? '<div style="font-size:10px;color:var(--red-flag);margin-top:6px;">No: ' + q.noCafes.map(esc).join(', ') + '</div>' : '';
+            var negRows = q.noEntries.map(function (entry) {
+              var rowId = 'neg-' + entry.submissionId + '-' + q.id;
+              return '<div style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--grey-200);padding:10px;margin-top:8px;flex-wrap:wrap;">' +
+                '<div style="min-width:120px;font-size:12px;font-weight:700;">' + esc(entry.cafe) + '</div>' +
+                '<textarea data-comment-id="' + rowId + '" placeholder="Comment / action taken…" style="flex:1;min-width:180px;min-height:38px;padding:7px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + esc(entry.comment) + '</textarea>' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;white-space:nowrap;"><input type="checkbox" data-actioned-id="' + rowId + '"' + (entry.actioned ? ' checked' : '') + '> Actioned</label>' +
+                '<button class="btn outline small" data-save-id="' + rowId + '" data-sub="' + entry.submissionId + '" data-item="' + q.id + '" data-cond="' + (isConditional ? '1' : '0') + '">Save</button>' +
+                '<span class="hint" id="saved-' + rowId + '" style="width:100%;"></span>' +
+              '</div>';
+            }).join('');
             return '<div style="border-bottom:1px solid var(--grey-200);padding:10px 0;">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:600;">' + esc(q.label) + '</span>' +
               '<span>' + flagged + ' <span style="font-size:10px;color:var(--grey-500);">(' + q.yesCount + ' Yes)</span></span></div>' +
-              noList +
+              negRows +
             '</div>';
           }).join('') +
         '</div>';
       }
 
+      var s = d.summary || {};
+      var summaryFooterHtml = '<div class="card" style="margin-bottom:20px;">' +
+        '<div class="editor-section-title" style="margin-top:0;">Launch Summary</div>' +
+        '<div class="tracker-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">' +
+          statBlock(s.submissionRate === null ? '—' : s.submissionRate + '%', 'Submitted vs Assigned') +
+          statBlock(s.totalFlaggedInputs, 'Flagged Inputs') +
+          statBlock(s.actionedFlaggedInputs, 'Actioned') +
+          statBlock(s.pendingFlaggedInputs, 'Pending Action') +
+          statBlock(s.launchSuccessRate === null ? '—' : s.launchSuccessRate + '%', 'Launch Success Rate') +
+        '</div>' +
+        '<div class="hint" style="margin-top:10px;">' +
+          (s.submissionRate === null ? 'Submitted vs Assigned isn\'t available since this launch wasn\'t scoped to a specific café list. ' : '') +
+          'Launch Success Rate = % of submissions with zero flagged (No) answers.' +
+        '</div>' +
+      '</div>';
+
       document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml +
-        questionBlock('Checklist Question Breakdown', d.questionBreakdown) +
-        questionBlock('Conditional Section Breakdown', d.conditionalBreakdown);
+        questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
+        questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
+        summaryFooterHtml;
+
+      document.getElementById('insightBody').querySelectorAll('[data-save-id]').forEach(function (btn) {
+        btn.onclick = function () {
+          var rowId = btn.getAttribute('data-save-id');
+          var subId = btn.getAttribute('data-sub');
+          var itemId = btn.getAttribute('data-item');
+          var isCond = btn.getAttribute('data-cond') === '1';
+          var comment = document.querySelector('[data-comment-id="' + rowId + '"]').value;
+          var actioned = document.querySelector('[data-actioned-id="' + rowId + '"]').checked;
+          api('/submissions/' + subId + '/answer', { method: 'PATCH', body: { itemId: itemId, isConditional: isCond, comment: comment, actioned: actioned } })
+            .then(function () {
+              var savedEl = document.getElementById('saved-' + rowId);
+              savedEl.textContent = 'Saved ✓';
+              setTimeout(function () { savedEl.textContent = ''; }, 2000);
+            })
+            .catch(function (e) { alert('Failed to save: ' + e.message); });
+        };
+      });
     }).catch(function (e) {
       document.getElementById('insightBody').innerHTML = '<div class="card empty-state">Failed to load insights: ' + esc(e.message) + '</div>';
     });
@@ -555,6 +607,83 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
   function statBlock(value, label) {
     return '<div><div class="t-stat-value">' + value + '</div><div class="t-stat-label">' + esc(label) + '</div></div>';
+  }
+
+  function exportInsightsPDF(d) {
+    if (!window.jspdf) { alert('PDF library still loading — please try again in a moment.'); return; }
+    var doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
+    var y = 50;
+    var pageWidth = doc.internal.pageSize.getWidth();
+    var marginLeft = 40;
+    var maxWidth = pageWidth - marginLeft * 2;
+
+    function ensureSpace(lines) {
+      if (y + lines * 14 > 780) { doc.addPage(); y = 50; }
+    }
+    function heading(text) {
+      ensureSpace(2);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+      doc.text(text, marginLeft, y); y += 20;
+    }
+    function subheading(text) {
+      ensureSpace(2);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+      doc.text(text, marginLeft, y); y += 16;
+    }
+    function body(text) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+      var lines = doc.splitTextToSize(text, maxWidth);
+      ensureSpace(lines.length);
+      doc.text(lines, marginLeft, y);
+      y += lines.length * 13 + 4;
+    }
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+    doc.text('Bootlegger Coffee Co. — Launch Report', marginLeft, y); y += 24;
+    heading(d.tracker.name);
+    body('Generated: ' + new Date().toLocaleString('en-ZA'));
+    y += 6;
+
+    subheading('Summary');
+    body('Assigned cafés: ' + (d.totalAssigned === null ? 'N/A (open to all)' : d.totalAssigned));
+    body('Submitted: ' + d.totalSubmitted);
+    body('Exempted: ' + d.totalExempted);
+    body('Not yet submitted: ' + (d.totalMissing === null ? 'N/A' : d.totalMissing));
+    y += 6;
+
+    var s = d.summary || {};
+    subheading('Launch Success Summary');
+    body('Submitted vs Assigned: ' + (s.submissionRate === null ? 'N/A' : s.submissionRate + '%'));
+    body('Flagged inputs: ' + s.totalFlaggedInputs + '  (Actioned: ' + s.actionedFlaggedInputs + ', Pending: ' + s.pendingFlaggedInputs + ')');
+    body('Launch Success Rate: ' + (s.launchSuccessRate === null ? 'N/A' : s.launchSuccessRate + '%') + '  (' + s.cleanSubmissions + ' of ' + s.totalSubmissions + ' submissions with zero flags)');
+    y += 6;
+
+    if (d.totalMissing !== null) {
+      subheading('Not Yet Submitted (' + d.missingCafes.length + ')');
+      body(d.missingCafes.length ? d.missingCafes.join(', ') : 'All assigned cafés have submitted.');
+      y += 4;
+    }
+
+    subheading('Exempted Cafés (' + d.exemptCafes.length + ')');
+    body(d.exemptCafes.length ? d.exemptCafes.map(function (e) { return e.cafe + ' — ' + e.reason; }).join('; ') : 'None.');
+    y += 6;
+
+    function pdfQuestionSection(title, items) {
+      if (!items.length) return;
+      subheading(title);
+      items.forEach(function (q) {
+        body(q.label + '  (' + q.yesCount + ' Yes / ' + q.noCount + ' No)');
+        q.noEntries.forEach(function (entry) {
+          var actionedTag = entry.actioned ? '[Actioned]' : '[Pending]';
+          body('   • ' + entry.cafe + ' ' + actionedTag + (entry.comment ? ' — ' + entry.comment : ''));
+        });
+      });
+      y += 6;
+    }
+    pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
+    pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
+
+    doc.save((d.tracker.name || 'launch-report').replace(/[^a-z0-9]+/gi, '-') + '-report.pdf');
   }
 
   // ---------------------- TRACKER DETAIL ----------------------
@@ -805,8 +934,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     function renderItemRows(containerId, items) {
       var c = document.getElementById(containerId);
       c.innerHTML = items.map(function (it, idx) {
+        if (!it.input_type) it.input_type = 'yesno';
         return '<div class="item-row" data-idx="' + idx + '">' +
           '<input type="text" value="' + esc(it.label) + '" data-field="label">' +
+          '<label class="photo-toggle"><input type="checkbox" data-field="checkbox-only"' + (it.input_type === 'checkbox' ? ' checked' : '') + '> Tick-box only</label>' +
           '<label class="photo-toggle"><input type="checkbox" data-field="photo"' + (it.requires_photo ? ' checked' : '') + '> Add Picture</label>' +
           '<span class="remove-item" data-remove="1">✕</span>' +
         '</div>';
@@ -815,6 +946,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         var idx = parseInt(row.getAttribute('data-idx'), 10);
         row.querySelector('input[data-field=label]').addEventListener('input', function (e) { items[idx].label = e.target.value; });
         row.querySelector('input[data-field=photo]').addEventListener('change', function (e) { items[idx].requires_photo = e.target.checked; });
+        row.querySelector('input[data-field="checkbox-only"]').addEventListener('change', function (e) { items[idx].input_type = e.target.checked ? 'checkbox' : 'yesno'; });
         row.querySelector('.remove-item').addEventListener('click', function () { items.splice(idx, 1); renderItemRows(containerId, items); });
       });
     }
@@ -823,11 +955,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     renderItemRows('condItemsList', data.conditional.items);
 
     document.getElementById('addItemBtn').onclick = function () {
-      data.checklist_items.push({ id: genId('it'), label: '', requires_photo: false });
+      data.checklist_items.push({ id: genId('it'), label: '', requires_photo: false, input_type: 'yesno' });
       renderItemRows('itemsList', data.checklist_items);
     };
     document.getElementById('addCondItemBtn').onclick = function () {
-      data.conditional.items.push({ id: genId('ct'), label: '', requires_photo: false });
+      data.conditional.items.push({ id: genId('ct'), label: '', requires_photo: false, input_type: 'yesno' });
       renderItemRows('condItemsList', data.conditional.items);
     };
     document.getElementById('condToggle').querySelectorAll('.toggle-btn').forEach(function (btn) {
@@ -898,6 +1030,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     // If this launch was assigned to a specific format/café selection, only show those cafés.
     // Trackers created before this feature (or left as "All Formats") fall back to the full masterfile list.
     var scoped = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : FLAT_STORES;
+    var submittedNorm = (tracker.submitted_cafes || []).map(function (c) { return c.trim().toLowerCase(); });
     var byRegion = {};
     scoped.forEach(function (s) {
       var region = s.region || 'OTHER';
@@ -907,9 +1040,16 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     var storeOptions = '<option value="">Select your café…</option>' +
       Object.keys(byRegion).map(function (region) {
         return '<optgroup label="' + esc(region) + '">' +
-          byRegion[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') +
+          byRegion[region].map(function (n) {
+            var already = submittedNorm.indexOf(n.trim().toLowerCase()) !== -1;
+            return '<option value="' + esc(n) + '"' + (already ? ' disabled' : '') + '>' + esc(n) + (already ? ' — Already Submitted' : '') + '</option>';
+          }).join('') +
           '</optgroup>';
       }).join('');
+
+    function cafeAlreadySubmitted(name) {
+      return submittedNorm.indexOf((name || '').trim().toLowerCase()) !== -1;
+    }
 
     function itemBlockHtml(it) {
       var photoBlock = it.requires_photo
@@ -919,7 +1059,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
           '</div>'
         : '';
-      return checkRow(it.id, esc(it.label)) + photoBlock;
+      var questionBlock = it.input_type === 'checkbox'
+        ? '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>'
+        : checkRow(it.id, esc(it.label));
+      return questionBlock + photoBlock;
     }
 
     var wrap = document.getElementById('formWrap');
@@ -974,6 +1117,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       });
     });
 
+    wrap.querySelectorAll('[data-checkbox-field]').forEach(function (cb) {
+      var field = cb.getAttribute('data-checkbox-field');
+      cb.addEventListener('change', function () {
+        var val = cb.checked ? true : null; // unchecked = not yet confirmed, blocks submission
+        if (answers[field]) answers[field].value = val;
+        else if (condAnswers[field]) condAnswers[field].value = val;
+      });
+    });
+
     tracker.checklist_items.concat(tracker.conditional.items || []).forEach(function (it) {
       if (!it.requires_photo) return;
       var input = document.getElementById('photoInput-' + it.id);
@@ -1007,6 +1159,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       if (!state.disclaimerConfirmed) missing.push('Disclaimer confirmation');
 
       if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
+
+      if (cafeAlreadySubmitted(state.cafe)) {
+        errEl.innerHTML = '<div class="error-msg">' + esc(state.cafe) + ' has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.</div>';
+        return;
+      }
 
       var region = null;
       var match = FLAT_STORES.find(function (s) { return s.name === state.cafe; });
