@@ -538,6 +538,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           : '<div class="empty-state">No exemptions recorded for this launch.</div>') +
       '</div>';
 
+      var unscopedHtml = '';
+      if (d.unscopedSubmittedCafes && d.unscopedSubmittedCafes.length) {
+        unscopedHtml = '<div class="card" style="margin-bottom:20px;border-color:var(--red-flag);">' +
+          '<div class="editor-section-title" style="margin-top:0;color:var(--red-flag);">Submissions Outside Current Café List (' + d.unscopedSubmittedCafes.length + ')</div>' +
+          '<div class="hint" style="margin-bottom:8px;">These cafés submitted for this launch but aren\'t in the currently assigned café list — likely because the café selection was edited after they submitted, or the café name doesn\'t exactly match (e.g. a rename). They still count in the question breakdown below, but not in "Submitted vs Assigned".</div>' +
+          '<div class="sub-answers">' + d.unscopedSubmittedCafes.map(function (c) { return '<div class="answer-row"><span class="a-label">' + esc(c) + '</span></div>'; }).join('') + '</div>' +
+        '</div>';
+      }
+
       function questionBlock(title, items, isConditional) {
         if (!items.length) return '';
         return '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">' + esc(title) + '</div>' +
@@ -578,7 +587,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '</div>' +
       '</div>';
 
-      document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml +
+      document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml + unscopedHtml +
         questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
         questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
         summaryFooterHtml;
@@ -1177,28 +1186,4 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
       api('/trackers/' + tracker.id + '/submissions', {
         method: 'POST',
-        body: { cafe: state.cafe, region: region, submittedBy: state.submittedBy, answers: answerArr, conditionalTriggered: state.conditionalTriggered, conditionalAnswers: condArr, disclaimerConfirmed: state.disclaimerConfirmed },
-      }).then(function () {
-        document.getElementById('formWrap').innerHTML =
-          '<div class="form-card success-screen"><div class="tick">✓</div><h2>Launch Confirmed</h2>' +
-          '<p>Thank you — ' + esc(state.cafe) + '\'s submission has been recorded.</p></div>';
-      }).catch(function (e) {
-        btn.disabled = false; btn.textContent = 'Submit Launch Confirmation';
-        errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>';
-      });
-    };
-  }
-
-  function checkRow(field, labelHtml) {
-    return '<div class="check-row"><span class="label">' + labelHtml + '</span>' +
-      '<div class="toggle-group" data-field="' + field + '">' +
-        '<button type="button" class="toggle-btn yes" data-val="true">Yes</button>' +
-        '<button type="button" class="toggle-btn no" data-val="false">No</button>' +
-      '</div></div>';
-  }
-
-  route();
-})();
-</script>
-</body>
-</html>
+        body: { cafe: state.cafe, region: region, submittedBy: state.submittedBy, answers: answerArr, conditionalTriggered: state.conditionalTriggered, conditionalAnswers:
