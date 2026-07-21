@@ -518,6 +518,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       : [];
 
     // ---- Summary stats ----
+    // "Submitted vs Assigned" — how much of the assigned café list has actually submitted.
     const submissionRate = assigned && assigned.length
       ? Math.round((submittedInScope.length / assigned.length) * 1000) / 10
       : null;
@@ -527,14 +528,14 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const actionedFlaggedInputs = allNoEntries.filter((e) => e.actioned).length;
     const pendingFlaggedInputs = totalFlaggedInputs - actionedFlaggedInputs;
 
-    function isSubmissionFlagged(s) {
-      const mainBad = (s.answers || []).some((a) => a.value === false);
-      const condBad = s.conditional_triggered && (s.conditional_answers || []).some((a) => a.value === false);
-      return mainBad || condBad;
-    }
-    const cleanSubmissions = submissions.filter((s) => !isSubmissionFlagged(s)).length;
-    const launchSuccessRate = submissions.length
-      ? Math.round((cleanSubmissions / submissions.length) * 1000) / 10
+    // Launch Success Rate = % of assigned cafés that have submitted (same basis as "Submitted vs Assigned").
+    // Launch Accuracy Rate = % of flagged inputs relative to total submissions received.
+    const launchAccuracyRate = submissions.length
+      ? Math.round((totalFlaggedInputs / submissions.length) * 1000) / 10
+      : null;
+    // Launch Action Rate = % of flagged inputs that have been actioned.
+    const launchActionRate = totalFlaggedInputs
+      ? Math.round((actionedFlaggedInputs / totalFlaggedInputs) * 1000) / 10
       : null;
 
     res.json({
@@ -545,17 +546,17 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       totalMissing: assigned ? missingCafes.length : null,
       missingCafes,
       exemptCafes: exemptions,
-      unscopedSubmittedCafes, // submissions received for cafés NOT in the current assigned list — worth reviewing
+      unscopedSubmittedCafes, // no longer shown as its own report section — surfaced instead in the template editor
       questionBreakdown,
       conditionalBreakdown,
       summary: {
-        submissionRate,          // % of assigned cafés that have submitted (null if not scoped to a format)
+        submissionRate,          // % of assigned cafés that have submitted — this IS the "Launch Success Rate"
         totalFlaggedInputs,      // total "No" answers across all questions
         actionedFlaggedInputs,   // of those, how many are marked actioned
         pendingFlaggedInputs,    // remaining un-actioned flagged inputs
-        launchSuccessRate,       // % of submissions with zero flagged answers
+        launchAccuracyRate,      // % of flagged inputs relative to total submissions received
+        launchActionRate,        // % of flagged inputs that have been actioned
         totalSubmissions: submissions.length,
-        cleanSubmissions,
       },
     });
   } catch (err) {
