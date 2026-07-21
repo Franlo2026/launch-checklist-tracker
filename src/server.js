@@ -549,4 +549,27 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
         conditionalTriggered ? JSON.stringify(conditionalAnswers || []) : null,
         !!disclaimerConfirmed,
       ]
- 
+    );
+    res.status(201).json({ id });
+  } catch (err) {
+    if (err.code === '23505') { // unique_violation — race-condition backstop
+      return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch.' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Failed to save submission' });
+  }
+});
+
+// SPA fallback — serve index.html for the public /launch/:id and admin /tracker/:id links
+app.get(['/launch/*', '/tracker/*'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+initDB()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Launch tracker running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('Failed to initialise DB', err);
+    process.exit(1);
+  });
