@@ -66,6 +66,10 @@ async function initDB() {
   `);
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_submissions_tracker ON submissions(tracker_id);`);
+
+  // Migration-safe additions — safe to run against an already-live database with existing data
+  await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS assigned_cafes JSONB NOT NULL DEFAULT '[]';`);
+  await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS exemptions JSONB NOT NULL DEFAULT '[]';`);
 }
 
 const genId = (prefix) => `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
@@ -190,6 +194,50 @@ app.post('/api/admins', requireAuth, async (req, res) => {
   }
 });
 
+// Edit an admin's username / display name / (optionally) password
+app.patch('/api/admins/:id', requireAuth, async (req, res) => {
+  try {
+    const { username, password, displayName } = req.body;
+    const existing = await pool.query(`SELECT * FROM admins WHERE id = $1`, [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Admin not found' });
+    const cur = existing.rows[0];
+
+    let uname = cur.username;
+    if (username && username.trim().toLowerCase() !== cur.username) {
+      uname = username.trim().toLowerCase();
+      const clash = await pool.query(`SELECT id FROM admins WHERE username = $1 AND id <> $2`, [uname, req.params.id]);
+      if (clash.rows.length) return res.status(409).json({ error: 'That username is already taken' });
+    }
+
+    const newDisplayName = displayName ? displayName.trim() : cur.display_name;
+    const newHash = password ? await bcrypt.hash(password, 10) : cur.password_hash;
+
+    const { rows } = await pool.query(
+      `UPDATE admins SET username=$1, display_name=$2, password_hash=$3 WHERE id=$4 RETURNING id, username, display_name`,
+      [uname, newDisplayName, newHash, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update admin' });
+  }
+});
+
+// Delete an admin — refuses to remove the last remaining account so nobody gets locked out
+app.delete('/api/admins/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows: countRows } = await pool.query(`SELECT COUNT(*)::int AS c FROM admins`);
+    if (countRows[0].c <= 1) return res.status(400).json({ error: 'Cannot delete the last remaining admin account' });
+
+    const { rows } = await pool.query(`DELETE FROM admins WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Admin not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete admin' });
+  }
+});
+
 // ---------- Trackers ----------
 
 app.get('/api/trackers', requireAuth, async (req, res) => {
@@ -228,16 +276,18 @@ app.get('/api/trackers', requireAuth, async (req, res) => {
 
 app.post('/api/trackers', requireAuth, async (req, res) => {
   try {
-    const { name, formTitle, description, checklistItems, conditional } = req.body;
+    const { name, formTitle, description, checklistItems, conditional, assignedCafes, exemptions } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Launch name is required' });
     const id = genId('launch');
     const { rows } = await pool.query(
-      `INSERT INTO launch_trackers (id, name, form_title, description, created_by, checklist_items, conditional)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO launch_trackers (id, name, form_title, description, created_by, checklist_items, conditional, assigned_cafes, exemptions)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [
         id, name.trim(), (formTitle || name).trim(), description || null, req.admin.displayName,
         JSON.stringify(checklistItems || []),
         JSON.stringify(conditional || { enabled: false, trigger_label: '', items: [] }),
+        JSON.stringify(assignedCafes || []),
+        JSON.stringify(exemptions || []),
       ]
     );
     res.status(201).json(rows[0]);
@@ -261,7 +311,7 @@ app.get('/api/trackers/:id', async (req, res) => {
 
 app.patch('/api/trackers/:id', requireAuth, async (req, res) => {
   try {
-    const { active, name, formTitle, description, checklistItems, conditional } = req.body;
+    const { active, name, formTitle, description, checklistItems, conditional, assignedCafes, exemptions } = req.body;
     const existing = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Tracker not found' });
     const cur = existing.rows[0];
@@ -273,16 +323,81 @@ app.patch('/api/trackers/:id', requireAuth, async (req, res) => {
       description: typeof description === 'string' ? description : cur.description,
       checklist_items: checklistItems ? JSON.stringify(checklistItems) : JSON.stringify(cur.checklist_items),
       conditional: conditional ? JSON.stringify(conditional) : JSON.stringify(cur.conditional),
+      assigned_cafes: assignedCafes ? JSON.stringify(assignedCafes) : JSON.stringify(cur.assigned_cafes),
+      exemptions: exemptions ? JSON.stringify(exemptions) : JSON.stringify(cur.exemptions),
     };
 
     const { rows } = await pool.query(
-      `UPDATE launch_trackers SET active=$1, name=$2, form_title=$3, description=$4, checklist_items=$5, conditional=$6 WHERE id=$7 RETURNING *`,
-      [updated.active, updated.name, updated.form_title, updated.description, updated.checklist_items, updated.conditional, req.params.id]
+      `UPDATE launch_trackers SET active=$1, name=$2, form_title=$3, description=$4, checklist_items=$5, conditional=$6, assigned_cafes=$7, exemptions=$8 WHERE id=$9 RETURNING *`,
+      [updated.active, updated.name, updated.form_title, updated.description, updated.checklist_items, updated.conditional, updated.assigned_cafes, updated.exemptions, req.params.id]
     );
     res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update tracker' });
+  }
+});
+
+// ---------- Insights ----------
+// Aggregated per-question breakdown + missing/exempt café reporting for a tracker
+app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
+  try {
+    const trackerRes = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
+    if (!trackerRes.rows.length) return res.status(404).json({ error: 'Tracker not found' });
+    const tracker = trackerRes.rows[0];
+
+    const subsRes = await pool.query(`SELECT * FROM submissions WHERE tracker_id = $1`, [req.params.id]);
+    const submissions = subsRes.rows;
+
+    const submittedCafes = Array.from(new Set(submissions.map((s) => s.cafe)));
+    const exemptions = tracker.exemptions || [];
+    const exemptCafeNames = exemptions.map((e) => e.cafe);
+
+    // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
+    const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
+
+    let missingCafes = [];
+    if (assigned) {
+      missingCafes = assigned
+        .map((c) => c.name || c)
+        .filter((name) => !submittedCafes.includes(name) && !exemptCafeNames.includes(name));
+    }
+
+    function breakdown(items, getAnswers) {
+      return items.map((item) => {
+        const relevant = submissions.filter((s) => getAnswers(s) !== null);
+        let yesCount = 0, noCount = 0;
+        const noCafes = [];
+        relevant.forEach((s) => {
+          const ans = getAnswers(s) || [];
+          const match = ans.find((a) => a.id === item.id);
+          if (!match) return;
+          if (match.value === true) yesCount += 1;
+          else { noCount += 1; noCafes.push(s.cafe); }
+        });
+        return { id: item.id, label: item.label, yesCount, noCount, noCafes };
+      });
+    }
+
+    const questionBreakdown = breakdown(tracker.checklist_items, (s) => s.answers);
+    const conditionalBreakdown = tracker.conditional && tracker.conditional.enabled
+      ? breakdown(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
+      : [];
+
+    res.json({
+      tracker: { id: tracker.id, name: tracker.name, form_title: tracker.form_title },
+      totalAssigned: assigned ? assigned.length : null,
+      totalSubmitted: submittedCafes.length,
+      totalExempted: exemptions.length,
+      totalMissing: assigned ? missingCafes.length : null,
+      missingCafes,
+      exemptCafes: exemptions,
+      questionBreakdown,
+      conditionalBreakdown,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to compute insights' });
   }
 });
 
