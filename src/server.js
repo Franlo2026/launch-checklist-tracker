@@ -129,6 +129,14 @@ function resolveCafeMatch(targetName, candidates) {
     const found = candidates.find((c) => (c || '').trim().toLowerCase() === stripped);
     if (found) return found;
   }
+
+  // Last resort: the old submitted name may have had NO suffix at all, while the current
+  // canonical name gained one later (e.g. "Hoedspruit" -> "Hoedspruit (C-Store)"). Compare
+  // stripped forms on both sides, but only accept the match if it's unambiguous — if two
+  // different candidates both strip down to the same key, decline rather than guess.
+  const symmetricMatches = candidates.filter((c) => stripFormatSuffix(c).toLowerCase() === stripped);
+  if (symmetricMatches.length === 1) return symmetricMatches[0];
+
   return null;
 }
 
