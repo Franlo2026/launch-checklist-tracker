@@ -172,22 +172,37 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 (function () {
   'use strict';
 
-  var STORES = {
-    "WESTERN CAPE": ["Point Mall","Kenilworth","Kalk Bay","Tokai","Green Point","Cape Quarter","Century City","Harrington Street","Stellenbosch","Claremont","Bakoven","Three Anchor Bay","Woodstock Quarter","112 Kloof Street","Aquarium","Gardens Centre","Bree Street","Blouberg","Durbanville","Vredehoek","Frater Square","Bridgewater","Drakenstein Sentrum","Table Bay Mall","Somerset West","Sandown Retail Crossing","Strand Beach Road","Meadowridge Park n Shop","Dean Street","Hartenbos","Rosmead Avenue","Gordon's Bay","Clara Anna","Ndabeni","Franschhoek","Hout Bay","Canal Walk","Yellowoods Centre","Milkwood Square Centre","Plattekloof Village","Somerset Mall","Paarden Eiland","York Street","Paarl Mall"],
-    "GAUTENG": ["Ferndale on Republic","Blueberry Square","Chartwell Corner","The Zone, Rosebank","Norwood","Grayston Shopping Centre","Cresta Shopping Centre, Cresta","Design Quarter, Fourways","Irene Link, Irene","Olivedale Corner","Thatchfield Retail Centre","Ridgeview","Lintons Corner","Bedford Centre","Moreleta Park","Karaglen","Mushroom Farm","Hyde Park","Sandton Gate","Three Rivers","Douglasdale","Parkhurst"],
-    "NORTH WEST": ["Heather Park, Planet Fitness xs","Mooirivier Mall, Potchefstroom"],
-    "KZN": ["Musgrave Centre","The Pearls"],
-    "FREE STATE": ["Preller Walk","Woodland Hills"],
-    "EASTERN CAPE": ["Vincent Park","Boardwalk","Walmer Park"],
-    "NAMIBIA": ["The Grove","Windoek CBD"],
-    "XS STORES": ["Sunninghill Village XS","Bram Fischer XS","Clearwater Mall XS","Delta Central XS","Mall of Africa XS","Gateway XS","Middleburg XS","Brackenfell Corner (XS)","Sea Point (XS)","PineworX (XS)","Muizenberg (XS)","Salt River (XS)","Brooklyn Junction (XS)","N1 Value Centre (XS)","Foreshore XS","Paardevlei XS","Grandwest XS","Cape Gate XS","Westlake XS","Eikestad (XS)","Laguna Mall XS","Welgelee Plein XS","Sandkraal XS","Springbok XS","Long Street XS","Woodmead XS"],
-    "KIOSKS": ["Bedford Sqaure Planet Fitness xs","Lennox Kimberly","Aquarium (XS)","V&A Waterfront (XS)","St Cyprian's","Sea Point High","Roamworx Floor 2 and 4","Cavendish Mall","Riverlands","N1 City Kiosk","Hermanus Kiosk"],
-    "TEMSA": ["Robert Broom XS","Winchester Hill XS","Route N4","Campbells","Sizan","Cashan","Simmonds","Paarl Mall","Durbanville","N12 East","Thabazimbi","Hoedspruit","Alzu Petroport N4","Alzu Rayton"]
+  var STORES_DATA = {
+    "Western Cape": [{n:"Point Mall",f:"All Day Cafe"}, {n:"Kenilworth",f:"All Day Cafe"}, {n:"Kalk Bay",f:"All Day Cafe"}, {n:"Tokai",f:"All Day Cafe"}, {n:"Green Point",f:"All Day Cafe"}, {n:"Cape Quarter",f:"All Day Cafe"}, {n:"Century City",f:"All Day Cafe"}, {n:"Harrington Street",f:"All Day Cafe"}, {n:"Stellenbosch",f:"All Day Cafe"}, {n:"Claremont",f:"All Day Cafe"}, {n:"Bakoven",f:"All Day Cafe"}, {n:"Three Anchor Bay",f:"All Day Cafe"}, {n:"Woodstock Quarter",f:"All Day Cafe"}, {n:"112 Kloof Street",f:"All Day Cafe"}, {n:"Aquarium",f:"All Day Cafe"}, {n:"Gardens Centre",f:"All Day Cafe"}, {n:"Bree Street",f:"All Day Cafe"}, {n:"Blouberg",f:"All Day Cafe"}, {n:"Durbanville",f:"All Day Cafe"}, {n:"Vredehoek",f:"All Day Cafe"}, {n:"Frater Square",f:"All Day Cafe"}, {n:"Bridgewater",f:"All Day Cafe"}, {n:"Drakenstein Sentrum",f:"All Day Cafe"}, {n:"Table Bay Mall",f:"All Day Cafe"}, {n:"Somerset West",f:"All Day Cafe"}, {n:"Sandown Retail Crossing",f:"All Day Cafe"}, {n:"Strand Beach Road",f:"All Day Cafe"}, {n:"Meadowridge Park n Shop",f:"All Day Cafe"}, {n:"Dean Street",f:"All Day Cafe"}, {n:"Hartenbos",f:"All Day Cafe"}, {n:"Rosmead Avenue",f:"All Day Cafe"}, {n:"Gordon's Bay",f:"All Day Cafe"}, {n:"Clara Anna",f:"All Day Cafe"}, {n:"Ndabeni",f:"All Day Cafe"}, {n:"Franschhoek",f:"All Day Cafe"}, {n:"Hout Bay",f:"All Day Cafe"}, {n:"Canal Walk",f:"All Day Cafe"}, {n:"Yellowoods Centre",f:"All Day Cafe"}, {n:"Milkwood Square Centre",f:"All Day Cafe"}, {n:"Plattekloof Village",f:"All Day Cafe"}, {n:"Somerset Mall",f:"All Day Cafe"}, {n:"Paarden Eiland",f:"All Day Cafe"}, {n:"York Street",f:"All Day Cafe"}, {n:"Paarl Mall",f:"All Day Cafe"}, {n:"Haazendal Gables",f:"All Day Cafe"}, {n:"Brackenfell Corner",f:"XS"}, {n:"Sea Point",f:"XS"}, {n:"PineworX",f:"XS"}, {n:"Muizenberg",f:"XS"}, {n:"Salt River",f:"XS"}, {n:"Brooklyn Junction",f:"XS"}, {n:"N1 Value Centre",f:"XS"}, {n:"Foreshore",f:"XS"}, {n:"Paardevlei",f:"XS"}, {n:"Grandwest",f:"XS"}, {n:"Cape Gate",f:"XS"}, {n:"Westlake",f:"XS"}, {n:"Eikestad",f:"XS"}, {n:"Laguna Mall",f:"XS"}, {n:"Welgelee Plein",f:"XS"}, {n:"Sandkraal",f:"XS"}, {n:"Jetty Quarter",f:"XS"}, {n:"Aquarium Kiosk",f:"XS Kiosk"}, {n:"V&A Waterfront",f:"XS Kiosk"}, {n:"St Cyprian's",f:"XS Kiosk"}, {n:"Sea Point High",f:"XS Kiosk"}, {n:"Roamworx Floor 2 and 4",f:"XS Kiosk"}, {n:"Cavendish Mall Kiosk",f:"XS Kiosk"}, {n:"Riverlands",f:"XS Kiosk"}, {n:"N1 City Mall",f:"XS Kiosk"}, {n:"Hermanus",f:"XS Kiosk"}, {n:"Paarl Mall",f:"XS Petroleum/C-Store"}, {n:"Durbanville",f:"XS Petroleum/C-Store"}, {n:"Cavendish",f:"All Day Cafe"}],
+    "Gauteng": [{n:"Ferndale on Republic",f:"All Day Cafe"}, {n:"Blueberry Square",f:"All Day Cafe"}, {n:"Chartwell Corner",f:"All Day Cafe"}, {n:"The Zone, Rosebank",f:"All Day Cafe"}, {n:"Norwood",f:"All Day Cafe"}, {n:"Grayston Shopping Centre",f:"All Day Cafe"}, {n:"Cresta Shopping Centre, Cresta",f:"All Day Cafe"}, {n:"Design Quarter, Fourways",f:"All Day Cafe"}, {n:"Irene Link, Irene",f:"All Day Cafe"}, {n:"Olivedale Corner",f:"All Day Cafe"}, {n:"Thatchfield Retail Centre",f:"All Day Cafe"}, {n:"Ridgeview",f:"All Day Cafe"}, {n:"Bedford Centre",f:"All Day Cafe"}, {n:"Karaglen",f:"All Day Cafe"}, {n:"Mushroom Farm",f:"All Day Cafe"}, {n:"Hyde Park",f:"All Day Cafe"}, {n:"Sandton Gate",f:"All Day Cafe"}, {n:"Three Rivers",f:"All Day Cafe"}, {n:"Douglasdale",f:"All Day Cafe"}, {n:"Parkhurst",f:"All Day Cafe"}, {n:"Sunninghill Village",f:"XS"}, {n:"Bram Fischer",f:"XS"}, {n:"Clearwater Mall",f:"XS"}, {n:"Delta Central",f:"XS"}, {n:"Mall of Africa",f:"XS"}, {n:"Woodmead XS",f:"XS"}, {n:"Alzu Rayton",f:"XS Petroleum/C-Store"}, {n:"Bedford Sqaure Planet Fitness",f:"XS Kiosk"}, {n:"Winchester Hill XS",f:"XS Petroleum/C-Store"}, {n:"Campbells",f:"XS Petroleum/C-Store"}, {n:"Sizan",f:"XS Petroleum/C-Store"}, {n:"Simmonds",f:"XS Petroleum/C-Store"}],
+    "North West": [{n:"Mooirivier Mall, Potchefstroom",f:"All Day Cafe"}, {n:"Mafikeng",f:"XS Petroleum/C-Store"}, {n:"Cashan",f:"XS Petroleum/C-Store"}],
+    "KZN": [{n:"Musgrave Centre",f:"All Day Cafe"}, {n:"The Pearls",f:"All Day Cafe"}, {n:"Gateway",f:"XS"}],
+    "Free State": [{n:"Preller Walk",f:"All Day Cafe"}, {n:"Woodland Hills",f:"All Day Cafe"}],
+    "Mpumalanga": [{n:"Middleburg",f:"XS"}, {n:"Alzu Petroport N4",f:"XS Petroleum/C-Store"}, {n:"Route N4",f:"XS Petroleum/C-Store"}, {n:"Steiltes",f:"XS Petroleum/C-Store"}],
+    "Eastern Cape": [{n:"Vincent Park",f:"All Day Cafe"}, {n:"Boardwalk",f:"All Day Cafe"}, {n:"Walmer Park",f:"All Day Cafe"}, {n:"Sunridge Spar XS",f:"XS"}],
+    "Limpopo": [{n:"Thabazimbi",f:"XS Petroleum/C-Store"}, {n:"Hoedspruit",f:"XS Petroleum/C-Store"}, {n:"N12 East",f:"XS Petroleum/C-Store"}],
+    "Northern Cape": [{n:"Lennox Kimberly",f:"XS Petroleum/C-Store"}, {n:"Springbok",f:"XS"}],
+    "Namibia": [{n:"The Grove",f:"All Day Cafe"}, {n:"Windoek CBD",f:"XS"}],
   };
+
+  var FORMAT_OPTIONS = [
+    { value: 'All Day Cafe', label: 'All Day Cafes' },
+    { value: 'XS', label: 'XS' },
+    { value: 'XS Kiosk', label: 'XS Kiosk' },
+    { value: 'XS Petroleum/C-Store', label: 'XS Petroleum/C-Store' },
+    { value: 'ALL', label: 'All Formats' },
+  ];
+  var EXEMPTION_REASONS = ['Trading Hours', 'N/A Café Format', 'N/A Café Offering'];
+
   var FLAT_STORES = [];
-  Object.keys(STORES).forEach(function (region) {
-    STORES[region].forEach(function (name) { FLAT_STORES.push({ name: name, region: region }); });
+  Object.keys(STORES_DATA).forEach(function (region) {
+    STORES_DATA[region].forEach(function (s) { FLAT_STORES.push({ name: s.n, region: region, format: s.f }); });
   });
+
+  function storesByFormat(formatValue) {
+    if (formatValue === 'ALL') return FLAT_STORES.slice();
+    return FLAT_STORES.filter(function (s) { return s.format === formatValue; });
+  }
 
   function defaultTemplate() {
     return {
@@ -323,6 +338,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     app.innerHTML =
       '<div class="nav"><div class="logo">Bootlegger</div><div class="meta">' +
         '<span class="who" id="whoUser"></span>' +
+        '<span class="link" id="insightsLink">Insights</span>' +
         '<span class="link" id="manageAdminsLink">Manage Admins</span>' +
         '<span class="link" id="logoutLink">Log Out</span>' +
       '</div></div>' +
@@ -336,6 +352,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       '<div class="footer"><div>Bootlegger Coffee Co. · Internal Use Only</div><div>Generated via Claude</div></div>';
 
     api('/auth/status').then(function (s) { document.getElementById('whoUser').textContent = s.username || ''; });
+    document.getElementById('insightsLink').onclick = function () { renderInsightsPicker(); };
     document.getElementById('manageAdminsLink').onclick = function () { renderManageAdmins(); };
     document.getElementById('logoutLink').onclick = function () { api('/auth/logout', { method: 'POST' }).then(function () { navigate('/'); }); };
     document.getElementById('btnNewTracker').onclick = function () { openTemplateEditor(null); };
@@ -398,10 +415,146 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function loadAdmins() {
     api('/admins').then(function (admins) {
       document.getElementById('adminList').innerHTML = '<div class="card" style="padding:0;">' +
-        '<table class="data-table"><thead><tr><th>Name</th><th>Username</th></tr></thead><tbody>' +
-        admins.map(function (a) { return '<tr><td>' + esc(a.display_name) + '</td><td>' + esc(a.username) + '</td></tr>'; }).join('') +
+        '<table class="data-table"><thead><tr><th>Name</th><th>Username</th><th></th></tr></thead><tbody>' +
+        admins.map(function (a) {
+          return '<tr><td>' + esc(a.display_name) + '</td><td>' + esc(a.username) + '</td><td style="text-align:right;">' +
+            '<button class="btn outline small" data-edit="' + a.id + '" style="margin-right:6px;">Edit</button>' +
+            '<button class="btn outline small" data-del="' + a.id + '">Delete</button></td></tr>';
+        }).join('') +
         '</tbody></table></div>';
+      admins.forEach(function (a) {
+        var editBtn = document.querySelector('[data-edit="' + a.id + '"]');
+        var delBtn = document.querySelector('[data-del="' + a.id + '"]');
+        if (editBtn) editBtn.onclick = function () { openEditAdminModal(a); };
+        if (delBtn) delBtn.onclick = function () { confirmDeleteAdmin(a); };
+      });
     });
+  }
+
+  function openEditAdminModal(admin) {
+    var backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = '<div class="modal">' +
+      '<h3>Edit Admin</h3>' +
+      '<div class="field"><label>Name</label><input type="text" id="eaName" value="' + esc(admin.display_name) + '"></div>' +
+      '<div class="field"><label>Username</label><input type="text" id="eaUser" value="' + esc(admin.username) + '"></div>' +
+      '<div class="field"><label>New Password (leave blank to keep unchanged)</label><input type="password" id="eaPass" placeholder="••••••••"></div>' +
+      '<div id="eaError"></div>' +
+      '<div class="modal-actions"><button class="btn outline" id="eaCancel">Cancel</button><button class="btn gold" id="eaSave">Save Changes</button></div>' +
+    '</div>';
+    document.body.appendChild(backdrop);
+    backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
+    document.getElementById('eaCancel').onclick = function () { backdrop.remove(); };
+    document.getElementById('eaSave').onclick = function () {
+      var errEl = document.getElementById('eaError'); errEl.innerHTML = '';
+      var name = document.getElementById('eaName').value.trim();
+      var user = document.getElementById('eaUser').value.trim();
+      var pass = document.getElementById('eaPass').value;
+      if (!user) { errEl.innerHTML = '<div class="error-msg">Username is required</div>'; return; }
+      var payload = { username: user, displayName: name || user };
+      if (pass) payload.password = pass;
+      api('/admins/' + admin.id, { method: 'PATCH', body: payload })
+        .then(function () { backdrop.remove(); loadAdmins(); })
+        .catch(function (e) { errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
+    };
+  }
+
+  function confirmDeleteAdmin(admin) {
+    var backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = '<div class="modal">' +
+      '<h3>Delete Admin</h3>' +
+      '<p style="font-size:12px;color:var(--grey-700);">Remove <strong>' + esc(admin.display_name) + '</strong> (' + esc(admin.username) + ')? They will no longer be able to log into the dashboard.</p>' +
+      '<div id="daError"></div>' +
+      '<div class="modal-actions"><button class="btn outline" id="daCancel">Cancel</button><button class="btn gold" id="daConfirm">Delete</button></div>' +
+    '</div>';
+    document.body.appendChild(backdrop);
+    backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
+    document.getElementById('daCancel').onclick = function () { backdrop.remove(); };
+    document.getElementById('daConfirm').onclick = function () {
+      api('/admins/' + admin.id, { method: 'DELETE' })
+        .then(function () { backdrop.remove(); loadAdmins(); })
+        .catch(function (e) { document.getElementById('daError').innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
+    };
+  }
+
+  // ---------------------- INSIGHTS ----------------------
+  function renderInsightsPicker() {
+    app.innerHTML =
+      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta"><span class="link" id="backNav">&larr; Dashboard</span></div></div>' +
+      '<div class="page">' +
+        '<div class="page-header"><div><h1>Insights</h1><div class="sub">Select a launch tracker to see submission insights</div></div></div>' +
+        '<div class="card"><div class="field" style="margin-bottom:0;"><label>Launch Tracker</label><select id="insightPicker"><option value="">Loading…</option></select></div></div>' +
+        '<div id="insightBody" style="margin-top:20px;"></div>' +
+      '</div>';
+    document.getElementById('backNav').onclick = function () { navigate('/'); };
+    api('/trackers').then(function (trackers) {
+      var sel = document.getElementById('insightPicker');
+      sel.innerHTML = '<option value="">Select a launch…</option>' +
+        trackers.map(function (t) { return '<option value="' + t.id + '">' + esc(t.name) + (t.active ? '' : ' (Archived)') + '</option>'; }).join('');
+      sel.onchange = function () {
+        if (sel.value) loadInsights(sel.value);
+        else document.getElementById('insightBody').innerHTML = '';
+      };
+    });
+  }
+
+  function loadInsights(trackerId) {
+    document.getElementById('insightBody').innerHTML = '<div class="empty-state">Loading…</div>';
+    api('/trackers/' + trackerId + '/insights').then(function (d) {
+      var scopeNote = d.totalAssigned === null
+        ? '<div class="hint">This launch wasn\'t scoped to a specific format/café list, so "not yet submitted" can\'t be calculated — only submitted results are shown.</div>'
+        : '';
+
+      var summaryHtml = '<div class="card" style="margin-bottom:20px;">' +
+        '<div class="tracker-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">' +
+          statBlock(d.totalAssigned === null ? '—' : d.totalAssigned, 'Assigned Cafés') +
+          statBlock(d.totalSubmitted, 'Submitted') +
+          statBlock(d.totalExempted, 'Exempted') +
+          statBlock(d.totalMissing === null ? '—' : d.totalMissing, 'Not Yet Submitted') +
+        '</div>' + scopeNote +
+      '</div>';
+
+      var missingHtml = '';
+      if (d.totalMissing !== null) {
+        missingHtml = '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">Not Yet Submitted (' + d.missingCafes.length + ')</div>' +
+          (d.missingCafes.length
+            ? '<div class="sub-answers">' + d.missingCafes.map(function (c) { return '<div class="answer-row"><span class="a-label">' + esc(c) + '</span></div>'; }).join('') + '</div>'
+            : '<div class="empty-state">All assigned cafés have submitted.</div>') +
+        '</div>';
+      }
+
+      var exemptHtml = '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">Exempted Cafés (' + d.exemptCafes.length + ')</div>' +
+        (d.exemptCafes.length
+          ? '<div class="sub-answers">' + d.exemptCafes.map(function (e) { return '<div class="answer-row"><span class="a-label">' + esc(e.cafe) + '</span><span style="color:var(--grey-500);font-size:10px;text-transform:uppercase;">' + esc(e.reason) + '</span></div>'; }).join('') + '</div>'
+          : '<div class="empty-state">No exemptions recorded for this launch.</div>') +
+      '</div>';
+
+      function questionBlock(title, items) {
+        if (!items.length) return '';
+        return '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">' + esc(title) + '</div>' +
+          items.map(function (q) {
+            var flagged = q.noCount > 0 ? '<span class="pill flag">' + q.noCount + ' No</span>' : '<span class="pill up">All Yes</span>';
+            var noList = q.noCafes.length ? '<div style="font-size:10px;color:var(--red-flag);margin-top:6px;">No: ' + q.noCafes.map(esc).join(', ') + '</div>' : '';
+            return '<div style="border-bottom:1px solid var(--grey-200);padding:10px 0;">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:600;">' + esc(q.label) + '</span>' +
+              '<span>' + flagged + ' <span style="font-size:10px;color:var(--grey-500);">(' + q.yesCount + ' Yes)</span></span></div>' +
+              noList +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+
+      document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml +
+        questionBlock('Checklist Question Breakdown', d.questionBreakdown) +
+        questionBlock('Conditional Section Breakdown', d.conditionalBreakdown);
+    }).catch(function (e) {
+      document.getElementById('insightBody').innerHTML = '<div class="card empty-state">Failed to load insights: ' + esc(e.message) + '</div>';
+    });
+  }
+
+  function statBlock(value, label) {
+    return '<div><div class="t-stat-value">' + value + '</div><div class="t-stat-label">' + esc(label) + '</div></div>';
   }
 
   // ---------------------- TRACKER DETAIL ----------------------
@@ -505,8 +658,12 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function openTemplateEditor(existingTracker) {
     var isEdit = !!existingTracker;
     var data = isEdit
-      ? JSON.parse(JSON.stringify({ name: existingTracker.name, form_title: existingTracker.form_title, description: existingTracker.description, checklist_items: existingTracker.checklist_items, conditional: existingTracker.conditional }))
-      : Object.assign({ name: '', form_title: '', description: '' }, defaultTemplate());
+      ? JSON.parse(JSON.stringify({
+          name: existingTracker.name, form_title: existingTracker.form_title, description: existingTracker.description,
+          checklist_items: existingTracker.checklist_items, conditional: existingTracker.conditional,
+          assigned_cafes: existingTracker.assigned_cafes || [], exemptions: existingTracker.exemptions || [],
+        }))
+      : Object.assign({ name: '', form_title: '', description: '', assigned_cafes: [], exemptions: [] }, defaultTemplate());
 
     var backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
@@ -516,6 +673,19 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       '<div class="field"><label>Submission Form Title (what branches see)</label><input type="text" id="teFormTitle" value="' + esc(data.form_title) + '" placeholder="Defaults to the launch name if left blank">' +
         '<div class="hint">This can be different from the internal launch name — e.g. simpler or more branch-friendly wording.</div></div>' +
       '<div class="field"><label>Description (optional)</label><input type="text" id="teDesc" value="' + esc(data.description || '') + '"></div>' +
+
+      '<div class="editor-section-title">Café Selection</div>' +
+      '<div class="hint" style="margin-bottom:10px;">Pick a format to load its cafés, then untick any you want to exclude. Leave empty to make this launch open to all cafés.</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="formatButtons">' +
+        FORMAT_OPTIONS.map(function (f) { return '<button type="button" class="btn outline small" data-format="' + esc(f.value) + '">' + esc(f.label) + '</button>'; }).join('') +
+      '</div>' +
+      '<div id="cafeCountLabel" style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px;"></div>' +
+      '<div id="cafeChecklist" style="max-height:260px;overflow-y:auto;border:1px solid var(--grey-200);padding:10px;"></div>' +
+
+      '<div class="editor-section-title">Exemptions</div>' +
+      '<div class="hint" style="margin-bottom:10px;">Exempt a café from this launch (e.g. trading hours, format not applicable). Exempted cafés are excluded from "not yet submitted" reporting in Insights.</div>' +
+      '<div id="exemptionForm" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;"></div>' +
+      '<div id="exemptionsList"></div>' +
 
       '<div class="editor-section-title">Checklist Items</div>' +
       '<div id="itemsList"></div>' +
@@ -540,6 +710,98 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
     document.getElementById('teCancel').onclick = function () { backdrop.remove(); };
 
+    // ---- Café checklist ----
+    function renderCafeChecklist() {
+      var byRegion = {};
+      data.assigned_cafes.forEach(function (s) {
+        var region = s.region || 'OTHER';
+        if (!byRegion[region]) byRegion[region] = [];
+        byRegion[region].push(s);
+      });
+      var countLabel = document.getElementById('cafeCountLabel');
+      countLabel.textContent = data.assigned_cafes.length
+        ? data.assigned_cafes.length + ' café' + (data.assigned_cafes.length === 1 ? '' : 's') + ' assigned'
+        : 'No cafés selected — open to all cafés';
+
+      var el = document.getElementById('cafeChecklist');
+      if (!data.assigned_cafes.length) {
+        el.innerHTML = '<div class="empty-state" style="padding:16px;">Pick a format above to load cafés.</div>';
+        return;
+      }
+      el.innerHTML = Object.keys(byRegion).sort().map(function (region) {
+        return '<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--grey-500);margin:10px 0 4px;">' + esc(region) + '</div>' +
+          byRegion[region].map(function (s) {
+            return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;">' +
+              '<input type="checkbox" checked data-cafe="' + esc(s.name) + '"> ' + esc(s.name) + '</label>';
+          }).join('');
+      }).join('');
+      el.querySelectorAll('input[data-cafe]').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+          if (!cb.checked) {
+            var cafeName = cb.getAttribute('data-cafe');
+            data.assigned_cafes = data.assigned_cafes.filter(function (s) { return s.name !== cafeName; });
+            renderCafeChecklist();
+            renderExemptionForm();
+          }
+        });
+      });
+    }
+
+    document.getElementById('formatButtons').querySelectorAll('button[data-format]').forEach(function (btn) {
+      btn.onclick = function () {
+        data.assigned_cafes = storesByFormat(btn.getAttribute('data-format'));
+        renderCafeChecklist();
+        renderExemptionForm();
+      };
+    });
+
+    // ---- Exemptions ----
+    function renderExemptionForm() {
+      var formEl = document.getElementById('exemptionForm');
+      if (!data.assigned_cafes.length) {
+        formEl.innerHTML = '<div class="hint">Select a format above first to add café exemptions.</div>';
+        return;
+      }
+      formEl.innerHTML =
+        '<select id="exCafe" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' +
+          data.assigned_cafes.map(function (s) { return '<option value="' + esc(s.name) + '">' + esc(s.name) + '</option>'; }).join('') +
+        '</select>' +
+        '<select id="exReason" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' +
+          EXEMPTION_REASONS.map(function (r) { return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('') +
+        '</select>' +
+        '<button type="button" class="btn outline small" id="addExemptionBtn">+ Add Exemption</button>';
+      document.getElementById('addExemptionBtn').onclick = function () {
+        var cafe = document.getElementById('exCafe').value;
+        var reason = document.getElementById('exReason').value;
+        data.exemptions = data.exemptions.filter(function (e) { return e.cafe !== cafe; });
+        data.exemptions.push({ cafe: cafe, reason: reason });
+        renderExemptionsList();
+      };
+    }
+
+    function renderExemptionsList() {
+      var el = document.getElementById('exemptionsList');
+      if (!data.exemptions.length) {
+        el.innerHTML = '<div class="empty-state" style="padding:10px 0;">No exemptions added.</div>';
+        return;
+      }
+      el.innerHTML = data.exemptions.map(function (e, idx) {
+        return '<div class="item-row"><span style="flex:1;font-size:12px;">' + esc(e.cafe) + ' — <span style="color:var(--grey-500);">' + esc(e.reason) + '</span></span>' +
+          '<span class="remove-item" data-ex-idx="' + idx + '">✕</span></div>';
+      }).join('');
+      el.querySelectorAll('[data-ex-idx]').forEach(function (span) {
+        span.addEventListener('click', function () {
+          data.exemptions.splice(parseInt(span.getAttribute('data-ex-idx'), 10), 1);
+          renderExemptionsList();
+        });
+      });
+    }
+
+    renderCafeChecklist();
+    renderExemptionForm();
+    renderExemptionsList();
+
+    // ---- Checklist items (unchanged behaviour) ----
     function renderItemRows(containerId, items) {
       var c = document.getElementById(containerId);
       c.innerHTML = items.map(function (it, idx) {
@@ -593,7 +855,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         if (emptyCond) { errEl.innerHTML = '<div class="error-msg">Every conditional item needs a label</div>'; return; }
       }
 
-      var payload = { name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional };
+      var payload = {
+        name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional,
+        assignedCafes: data.assigned_cafes, exemptions: data.exemptions,
+      };
       var req = isEdit
         ? api('/trackers/' + existingTracker.id, { method: 'PATCH', body: payload })
         : api('/trackers', { method: 'POST', body: payload });
@@ -630,10 +895,19 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     tracker.checklist_items.forEach(function (it) { answers[it.id] = { value: null, photo: null }; });
     (tracker.conditional.items || []).forEach(function (it) { condAnswers[it.id] = { value: null, photo: null }; });
 
+    // If this launch was assigned to a specific format/café selection, only show those cafés.
+    // Trackers created before this feature (or left as "All Formats") fall back to the full masterfile list.
+    var scoped = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : FLAT_STORES;
+    var byRegion = {};
+    scoped.forEach(function (s) {
+      var region = s.region || 'OTHER';
+      if (!byRegion[region]) byRegion[region] = [];
+      byRegion[region].push(s.name);
+    });
     var storeOptions = '<option value="">Select your café…</option>' +
-      Object.keys(STORES).map(function (region) {
+      Object.keys(byRegion).map(function (region) {
         return '<optgroup label="' + esc(region) + '">' +
-          STORES[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') +
+          byRegion[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') +
           '</optgroup>';
       }).join('');
 
