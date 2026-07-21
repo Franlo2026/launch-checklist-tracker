@@ -70,6 +70,18 @@ async function initDB() {
   // Migration-safe additions — safe to run against an already-live database with existing data
   await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS assigned_cafes JSONB NOT NULL DEFAULT '[]';`);
   await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS exemptions JSONB NOT NULL DEFAULT '[]';`);
+
+  // Enforce one submission per café per launch at the DB level (belt-and-braces alongside the app-level check).
+  // Wrapped in try/catch: if older duplicate data already exists on a live DB, creating the index would fail —
+  // in that case we log it and skip, rather than crashing the whole app on boot.
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_submission_per_cafe
+      ON submissions (tracker_id, LOWER(TRIM(cafe)));
+    `);
+  } catch (err) {
+    console.error('Could not create one-submission-per-café unique index (likely pre-existing duplicate data):', err.message);
+  }
 }
 
 const genId = (prefix) => `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
@@ -302,7 +314,11 @@ app.get('/api/trackers/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Tracker not found' });
-    res.json(rows[0]);
+
+    const subRes = await pool.query(`SELECT DISTINCT cafe FROM submissions WHERE tracker_id = $1`, [req.params.id]);
+    const tracker = rows[0];
+    tracker.submitted_cafes = subRes.rows.map((r) => r.cafe);
+    res.json(tracker);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch tracker' });
@@ -338,6 +354,38 @@ app.patch('/api/trackers/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Update the comment/actioned status on one specific answer within a submission (admin follow-up)
+app.patch('/api/submissions/:id/answer', requireAuth, async (req, res) => {
+  try {
+    const { itemId, isConditional, comment, actioned } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+
+    const { rows } = await pool.query(`SELECT * FROM submissions WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Submission not found' });
+    const sub = rows[0];
+
+    const column = isConditional ? 'conditional_answers' : 'answers';
+    const list = sub[column] || [];
+    const idx = list.findIndex((a) => a.id === itemId);
+    if (idx === -1) return res.status(404).json({ error: 'Answer not found on this submission' });
+
+    list[idx] = {
+      ...list[idx],
+      comment: typeof comment === 'string' ? comment : (list[idx].comment || ''),
+      actioned: typeof actioned === 'boolean' ? actioned : !!list[idx].actioned,
+    };
+
+    await pool.query(
+      `UPDATE submissions SET ${column} = $1 WHERE id = $2`,
+      [JSON.stringify(list), req.params.id]
+    );
+    res.json({ ok: true, answer: list[idx] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update answer' });
+  }
+});
+
 // ---------- Insights ----------
 // Aggregated per-question breakdown + missing/exempt café reporting for a tracker
 app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
@@ -352,30 +400,41 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const submittedCafes = Array.from(new Set(submissions.map((s) => s.cafe)));
     const exemptions = tracker.exemptions || [];
     const exemptCafeNames = exemptions.map((e) => e.cafe);
+    const norm = (s) => (s || '').trim().toLowerCase();
 
     // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
     const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
 
     let missingCafes = [];
     if (assigned) {
+      const submittedNorm = submittedCafes.map(norm);
+      const exemptNorm = exemptCafeNames.map(norm);
       missingCafes = assigned
         .map((c) => c.name || c)
-        .filter((name) => !submittedCafes.includes(name) && !exemptCafeNames.includes(name));
+        .filter((name) => !submittedNorm.includes(norm(name)) && !exemptNorm.includes(norm(name)));
     }
 
     function breakdown(items, getAnswers) {
       return items.map((item) => {
         const relevant = submissions.filter((s) => getAnswers(s) !== null);
         let yesCount = 0, noCount = 0;
-        const noCafes = [];
+        const noEntries = [];
         relevant.forEach((s) => {
           const ans = getAnswers(s) || [];
           const match = ans.find((a) => a.id === item.id);
           if (!match) return;
           if (match.value === true) yesCount += 1;
-          else { noCount += 1; noCafes.push(s.cafe); }
+          else {
+            noCount += 1;
+            noEntries.push({
+              submissionId: s.id,
+              cafe: s.cafe,
+              comment: match.comment || '',
+              actioned: !!match.actioned,
+            });
+          }
         });
-        return { id: item.id, label: item.label, yesCount, noCount, noCafes };
+        return { id: item.id, label: item.label, yesCount, noCount, noEntries };
       });
     }
 
@@ -383,6 +442,26 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const conditionalBreakdown = tracker.conditional && tracker.conditional.enabled
       ? breakdown(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
       : [];
+
+    // ---- Summary stats ----
+    const submissionRate = assigned && assigned.length
+      ? Math.round((submittedCafes.length / assigned.length) * 1000) / 10
+      : null;
+
+    const allNoEntries = questionBreakdown.concat(conditionalBreakdown).flatMap((q) => q.noEntries);
+    const totalFlaggedInputs = allNoEntries.length;
+    const actionedFlaggedInputs = allNoEntries.filter((e) => e.actioned).length;
+    const pendingFlaggedInputs = totalFlaggedInputs - actionedFlaggedInputs;
+
+    function isSubmissionFlagged(s) {
+      const mainBad = (s.answers || []).some((a) => a.value === false);
+      const condBad = s.conditional_triggered && (s.conditional_answers || []).some((a) => a.value === false);
+      return mainBad || condBad;
+    }
+    const cleanSubmissions = submissions.filter((s) => !isSubmissionFlagged(s)).length;
+    const launchSuccessRate = submissions.length
+      ? Math.round((cleanSubmissions / submissions.length) * 1000) / 10
+      : null;
 
     res.json({
       tracker: { id: tracker.id, name: tracker.name, form_title: tracker.form_title },
@@ -394,6 +473,15 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       exemptCafes: exemptions,
       questionBreakdown,
       conditionalBreakdown,
+      summary: {
+        submissionRate,          // % of assigned cafés that have submitted (null if not scoped to a format)
+        totalFlaggedInputs,      // total "No" answers across all questions
+        actionedFlaggedInputs,   // of those, how many are marked actioned
+        pendingFlaggedInputs,    // remaining un-actioned flagged inputs
+        launchSuccessRate,       // % of submissions with zero flagged answers
+        totalSubmissions: submissions.length,
+        cleanSubmissions,
+      },
     });
   } catch (err) {
     console.error(err);
@@ -429,6 +517,15 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
     if (!cafe || !submittedBy) return res.status(400).json({ error: 'Café name and submitted by are required' });
     if (!disclaimerConfirmed) return res.status(400).json({ error: 'You must confirm the launch disclaimer' });
 
+    // One submission per café per launch — friendly pre-check (the unique index below is the authoritative guard)
+    const dupe = await pool.query(
+      `SELECT id FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2))`,
+      [trackerId, cafe]
+    );
+    if (dupe.rows.length) {
+      return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
+    }
+
     const id = genId('sub');
     await pool.query(
       `INSERT INTO submissions (
@@ -444,6 +541,9 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
     );
     res.status(201).json({ id });
   } catch (err) {
+    if (err.code === '23505') { // unique_violation — race-condition backstop
+      return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Failed to save submission' });
   }
