@@ -1,1189 +1,552 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-<title>Bootlegger — Launch Checklist</title>
-<link rel="icon" href="data:,">
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap');
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+const crypto = require('crypto');
+const path = require('path');
+require('dotenv').config();
 
-:root {
-  --gold: #c8ae79;
-  --gold-light: rgba(200,174,121,0.12);
-  --black: #1a1a1a;
-  --white: #ffffff;
-  --grey-100: #f7f7f7;
-  --grey-200: #ebebeb;
-  --grey-300: #d4d4d4;
-  --grey-500: #999999;
-  --grey-700: #555555;
-  --font: 'Montserrat', sans-serif;
-  --green-ok: #4a7c4a;
-  --red-flag: #a94442;
+const app = express();
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_INSECURE_DEFAULT';
+const COOKIE_NAME = 'launch_session';
+
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: true, credentials: true }));
+app.use(cookieParser());
+app.use(express.json({ limit: '15mb' })); // photos come in as base64
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
+
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id            TEXT PRIMARY KEY,
+      username      TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      display_name  TEXT NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS launch_trackers (
+      id             TEXT PRIMARY KEY,
+      name           TEXT NOT NULL,
+      form_title     TEXT NOT NULL,
+      description    TEXT,
+      created_by     TEXT,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      active         BOOLEAN NOT NULL DEFAULT TRUE,
+      checklist_items JSONB NOT NULL DEFAULT '[]',
+      conditional     JSONB NOT NULL DEFAULT '{"enabled":false,"trigger_label":"","items":[]}'
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS submissions (
+      id                    TEXT PRIMARY KEY,
+      tracker_id            TEXT NOT NULL REFERENCES launch_trackers(id) ON DELETE CASCADE,
+      cafe                  TEXT NOT NULL,
+      region                TEXT,
+      submitted_by          TEXT NOT NULL,
+      answers               JSONB NOT NULL DEFAULT '[]',
+      conditional_triggered BOOLEAN NOT NULL DEFAULT FALSE,
+      conditional_answers   JSONB,
+      disclaimer_confirmed  BOOLEAN NOT NULL,
+      submitted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_submissions_tracker ON submissions(tracker_id);`);
+
+  // Migration-safe additions — safe to run against an already-live database with existing data
+  await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS assigned_cafes JSONB NOT NULL DEFAULT '[]';`);
+  await pool.query(`ALTER TABLE launch_trackers ADD COLUMN IF NOT EXISTS exemptions JSONB NOT NULL DEFAULT '[]';`);
+
+  // Enforce one submission per café per launch at the DB level (belt-and-braces alongside the app-level check).
+  // Wrapped in try/catch: if older duplicate data already exists on a live DB, creating the index would fail —
+  // in that case we log it and skip, rather than crashing the whole app on boot.
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_submission_per_cafe
+      ON submissions (tracker_id, LOWER(TRIM(cafe)));
+    `);
+  } catch (err) {
+    console.error('Could not create one-submission-per-café unique index (likely pre-existing duplicate data):', err.message);
+  }
 }
-* { box-sizing: border-box; }
-body { margin: 0; font-family: var(--font); background: var(--grey-100); color: var(--black); -webkit-tap-highlight-color: transparent; }
 
-.nav {
-  background: var(--black); height: 52px; position: sticky; top: 0; z-index: 50;
-  display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
-}
-.nav .logo { color: var(--white); font-weight: 700; font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase; }
-.nav .meta { color: var(--grey-500); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; display: flex; align-items: center; gap: 14px; }
-.nav .meta .who { color: var(--gold); }
-.nav .meta span.link { cursor: pointer; }
-.nav .meta span.link:hover { color: var(--white); }
+const genId = (prefix) => `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 
-.page { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
-.page-header {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  border-bottom: 1px solid var(--gold); padding-bottom: 14px; margin-bottom: 26px; flex-wrap: wrap; gap: 12px;
-}
-.page-header h1 { font-size: 18px; font-weight: 700; text-transform: uppercase; margin: 0; }
-.page-header .sub { font-size: 11px; color: var(--grey-500); text-transform: uppercase; margin-top: 4px; }
-.badge {
-  border: 1px solid var(--gold); background: var(--gold-light); color: var(--gold);
-  font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 5px 10px; letter-spacing: 0.06em;
-}
-
-.btn {
-  font-family: var(--font); border: none; cursor: pointer; padding: 11px 18px; font-size: 11px;
-  font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; background: var(--black); color: var(--white);
-  transition: opacity 0.15s;
-}
-.btn:hover { opacity: 0.85; }
-.btn.gold { background: var(--gold); color: var(--black); }
-.btn.outline { background: transparent; color: var(--black); border: 1px solid var(--grey-300); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.card { background: var(--white); border: 1px solid var(--grey-200); padding: 20px 22px; }
-.tracker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap: 16px; }
-.tracker-card { background: var(--white); border: 1px solid var(--grey-200); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; }
-.tracker-card:hover { border-color: var(--gold); }
-.tracker-card .t-name { font-size: 13px; font-weight: 700; text-transform: uppercase; }
-.tracker-card .t-desc { font-size: 11px; color: var(--grey-700); min-height: 14px; }
-.tracker-card .t-stats { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
-.t-stat-value { font-size: 22px; font-weight: 700; }
-.t-stat-label { font-size: 9px; color: var(--grey-500); text-transform: uppercase; letter-spacing: 0.06em; }
-.pill { border-radius: 20px; font-size: 9px; font-weight: 700; padding: 4px 9px; text-transform: uppercase; }
-.pill.up { background: var(--gold-light); color: var(--gold); }
-.pill.flag { background: #f7e8e8; color: var(--red-flag); }
-.pill.archived { background: #f2f2f2; color: var(--grey-500); }
-
-.sub-card { border: 1px solid var(--grey-200); background: var(--white); padding: 16px 18px; margin-bottom: 12px; }
-.sub-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.sub-cafe { font-size: 13px; font-weight: 700; text-transform: uppercase; }
-.sub-meta { font-size: 10px; color: var(--grey-500); text-transform: uppercase; }
-.sub-answers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 8px; margin-top: 8px; }
-.answer-row { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--grey-200); padding: 6px 0; font-size: 11px; }
-.answer-row .a-label { color: var(--grey-700); padding-right: 8px; }
-.check-ok { color: var(--green-ok); font-weight: 700; white-space: nowrap; }
-.check-bad { color: var(--red-flag); font-weight: 700; white-space: nowrap; }
-.thumb { width: 40px; height: 40px; object-fit: cover; border: 1px solid var(--grey-200); cursor: pointer; margin-top: 8px; margin-right: 6px; }
-.conditional-tag { font-size: 9px; color: var(--gold); text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; }
-
-.data-table { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--white); }
-.data-table thead th { font-weight: 700; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--black); text-align: left; background: var(--white); }
-.data-table tbody td { padding: 10px 12px; border-bottom: 1px solid var(--grey-200); vertical-align: middle; }
-.data-table tbody tr:last-child td { border-bottom: none; }
-
-.form-wrap { max-width: 560px; margin: 0 auto; padding: 24px 18px 60px; }
-.form-card { background: var(--white); border: 1px solid var(--grey-200); padding: 24px 22px; }
-.form-title { font-size: 17px; font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
-.form-sub { font-size: 11px; color: var(--grey-500); margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.04em; }
-.field { margin-bottom: 18px; }
-.field label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--grey-700); margin-bottom: 6px; }
-.field input[type=text], .field input[type=password], .field select {
-  width: 100%; padding: 11px 12px; border: 1px solid var(--grey-300); font-family: var(--font); font-size: 13px; background: var(--white);
-}
-.field input:focus, .field select:focus { outline: none; border-color: var(--gold); }
-.field .hint { font-size: 10px; color: var(--grey-500); margin-top: 5px; }
-.check-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--grey-200); padding: 13px 14px; margin-bottom: 10px; }
-.check-row .label { font-size: 12px; font-weight: 600; }
-.toggle-group { display: flex; gap: 6px; }
-.toggle-btn { border: 1px solid var(--grey-300); background: var(--white); font-family: var(--font); font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 7px 14px; cursor: pointer; letter-spacing: 0.04em; }
-.toggle-btn.yes.active { background: var(--gold); border-color: var(--gold); color: var(--black); }
-.toggle-btn.no.active { background: var(--black); border-color: var(--black); color: var(--white); }
-
-.photo-block { border: 1px dashed var(--grey-300); padding: 14px; margin-bottom: 10px; text-align: center; }
-.photo-block .ph-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--grey-700); margin-bottom: 10px; letter-spacing: 0.06em; }
-.photo-preview { max-width: 100%; max-height: 180px; display: block; margin: 10px auto 0; border: 1px solid var(--grey-200); }
-.file-btn-label { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; background: var(--grey-100); border: 1px solid var(--grey-300); padding: 9px 16px; cursor: pointer; }
-.file-btn-label input { display: none; }
-
-.hybrid-section { border-top: 2px solid var(--gold); margin-top: 22px; padding-top: 18px; }
-.hybrid-section .section-tag { font-size: 10px; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
-
-.disclaimer-box { background: var(--grey-100); border: 1px solid var(--grey-200); padding: 14px; margin: 20px 0; font-size: 11px; color: var(--grey-700); line-height: 1.5; }
-.disclaimer-check { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; }
-.disclaimer-check input { margin-top: 3px; width: 16px; height: 16px; }
-.disclaimer-check span { font-size: 12px; font-weight: 600; color: var(--black); }
-
-.submit-btn { width: 100%; padding: 15px; font-size: 12px; }
-.error-msg { color: var(--red-flag); font-size: 11px; margin-top: 10px; text-align: center; }
-.success-screen { text-align: center; padding: 60px 20px; }
-.success-screen .tick { font-size: 44px; color: var(--gold); margin-bottom: 16px; }
-.success-screen h2 { text-transform: uppercase; font-size: 16px; }
-.success-screen p { color: var(--grey-500); font-size: 12px; }
-
-.modal-backdrop { position: fixed; inset: 0; background: rgba(26,26,26,0.55); display: flex; align-items: flex-start; justify-content: center; z-index: 100; padding: 30px 16px; overflow-y: auto; }
-.modal { background: var(--white); border: 1px solid var(--grey-200); padding: 24px; max-width: 480px; width: 100%; margin-bottom: 40px; }
-.modal.wide { max-width: 640px; }
-.modal h3 { margin: 0 0 16px; font-size: 14px; text-transform: uppercase; }
-.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
-
-.lightbox-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
-.lightbox-backdrop img { max-width: 100%; max-height: 90vh; }
-
-.link-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
-.link-row input { flex: 1; min-width: 160px; padding: 9px 10px; border: 1px solid var(--grey-300); font-size: 11px; font-family: var(--font); background: var(--grey-100); }
-
-.empty-state { text-align: center; color: var(--grey-500); font-size: 12px; padding: 40px 0; }
-.back-link { font-size: 11px; color: var(--grey-500); text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; text-decoration: none; }
-.back-link:hover { color: var(--black); }
-
-.footer { border-top: 1px solid var(--grey-200); padding: 16px 20px; display: flex; justify-content: space-between; font-size: 10px; color: var(--grey-500); text-transform: uppercase; letter-spacing: 0.06em; max-width: 1100px; margin: 0 auto; }
-
-.login-wrap { max-width: 360px; margin: 60px auto; padding: 0 18px; }
-.login-card { background: var(--white); border: 1px solid var(--grey-200); padding: 28px 24px; }
-.login-card h2 { font-size: 15px; text-transform: uppercase; margin: 0 0 6px; }
-.login-card .sub { font-size: 11px; color: var(--grey-500); margin-bottom: 20px; text-transform: uppercase; }
-.lock-note { font-size: 10px; color: var(--grey-500); margin-top: 16px; line-height: 1.5; }
-
-.item-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--grey-200); padding: 8px 10px; margin-bottom: 8px; }
-.item-row input[type=text] { flex: 1; border: none; font-family: var(--font); font-size: 12px; padding: 4px; }
-.item-row input[type=text]:focus { outline: none; }
-.item-row label.photo-toggle { font-size: 9px; text-transform: uppercase; color: var(--grey-500); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.item-row .remove-item { color: var(--red-flag); cursor: pointer; font-size: 14px; font-weight: 700; padding: 0 4px; }
-.editor-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 18px 0 10px; border-bottom: 1px solid var(--grey-200); padding-bottom: 6px; }
-.add-item-btn { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--gold); cursor: pointer; letter-spacing: 0.04em; }
-.conditional-toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-
-@media (max-width: 640px) {
-  .page-header { flex-direction: column; align-items: flex-start; }
-}
-</style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-</head>
-<body>
-<div id="app"></div>
-
-<script>
-(function () {
-  'use strict';
-
-  var STORES_DATA = {
-    "Western Cape": [{n:"Point Mall",f:"All Day Cafe"}, {n:"Kenilworth",f:"All Day Cafe"}, {n:"Kalk Bay",f:"All Day Cafe"}, {n:"Tokai",f:"All Day Cafe"}, {n:"Green Point",f:"All Day Cafe"}, {n:"Cape Quarter",f:"All Day Cafe"}, {n:"Century City",f:"All Day Cafe"}, {n:"Harrington Street",f:"All Day Cafe"}, {n:"Stellenbosch",f:"All Day Cafe"}, {n:"Claremont",f:"All Day Cafe"}, {n:"Bakoven",f:"All Day Cafe"}, {n:"Three Anchor Bay",f:"All Day Cafe"}, {n:"Woodstock Quarter",f:"All Day Cafe"}, {n:"112 Kloof Street",f:"All Day Cafe"}, {n:"Aquarium",f:"All Day Cafe"}, {n:"Gardens Centre",f:"All Day Cafe"}, {n:"Bree Street",f:"All Day Cafe"}, {n:"Blouberg",f:"All Day Cafe"}, {n:"Durbanville (All Day Caf\u00e9)",f:"All Day Cafe"}, {n:"Vredehoek",f:"All Day Cafe"}, {n:"Frater Square",f:"All Day Cafe"}, {n:"Bridgewater",f:"All Day Cafe"}, {n:"Drakenstein Sentrum",f:"All Day Cafe"}, {n:"Table Bay Mall",f:"All Day Cafe"}, {n:"Somerset West",f:"All Day Cafe"}, {n:"Sandown Retail Crossing",f:"All Day Cafe"}, {n:"Strand Beach Road",f:"All Day Cafe"}, {n:"Meadowridge Park n Shop",f:"All Day Cafe"}, {n:"Dean Street",f:"All Day Cafe"}, {n:"Hartenbos",f:"All Day Cafe"}, {n:"Rosmead Avenue",f:"All Day Cafe"}, {n:"Gordon's Bay",f:"All Day Cafe"}, {n:"Clara Anna",f:"All Day Cafe"}, {n:"Ndabeni",f:"All Day Cafe"}, {n:"Franschhoek",f:"All Day Cafe"}, {n:"Hout Bay",f:"All Day Cafe"}, {n:"Canal Walk",f:"All Day Cafe"}, {n:"Yellowoods Centre",f:"All Day Cafe"}, {n:"Milkwood Square Centre",f:"All Day Cafe"}, {n:"Plattekloof Village",f:"All Day Cafe"}, {n:"Somerset Mall",f:"All Day Cafe"}, {n:"Paarden Eiland",f:"All Day Cafe"}, {n:"York Street",f:"All Day Cafe"}, {n:"Paarl Mall (All Day Caf\u00e9)",f:"All Day Cafe"}, {n:"Haazendal Gables",f:"All Day Cafe"}, {n:"Brackenfell Corner",f:"XS"}, {n:"Sea Point",f:"XS"}, {n:"PineworX",f:"XS"}, {n:"Muizenberg",f:"XS"}, {n:"Salt River",f:"XS"}, {n:"Brooklyn Junction",f:"XS"}, {n:"N1 Value Centre",f:"XS"}, {n:"Foreshore",f:"XS"}, {n:"Paardevlei",f:"XS"}, {n:"Grandwest",f:"XS"}, {n:"Cape Gate",f:"XS"}, {n:"Westlake",f:"XS"}, {n:"Eikestad",f:"XS"}, {n:"Laguna Mall",f:"XS"}, {n:"Welgelee Plein",f:"XS"}, {n:"Sandkraal",f:"XS"}, {n:"Jetty Quarter",f:"XS"}, {n:"Aquarium Kiosk",f:"XS Kiosk"}, {n:"V&A Waterfront",f:"XS Kiosk"}, {n:"St Cyprian's",f:"XS Kiosk"}, {n:"Sea Point High",f:"XS Kiosk"}, {n:"Roamworx Floor 2 and 4",f:"XS Kiosk"}, {n:"Cavendish Mall Kiosk",f:"XS Kiosk"}, {n:"Riverlands",f:"XS Kiosk"}, {n:"N1 City Mall",f:"XS Kiosk"}, {n:"Hermanus",f:"XS Kiosk"}, {n:"Paarl Mall (Petroleum/C-Store)",f:"XS Petroleum/C-Store"}, {n:"Durbanville (Petroleum/C-Store)",f:"XS Petroleum/C-Store"}, {n:"Cavendish",f:"All Day Cafe"}],
-    "Gauteng": [{n:"Ferndale on Republic",f:"All Day Cafe"}, {n:"Blueberry Square",f:"All Day Cafe"}, {n:"Chartwell Corner",f:"All Day Cafe"}, {n:"The Zone, Rosebank",f:"All Day Cafe"}, {n:"Norwood",f:"All Day Cafe"}, {n:"Grayston Shopping Centre",f:"All Day Cafe"}, {n:"Cresta Shopping Centre, Cresta",f:"All Day Cafe"}, {n:"Design Quarter, Fourways",f:"All Day Cafe"}, {n:"Irene Link, Irene",f:"All Day Cafe"}, {n:"Olivedale Corner",f:"All Day Cafe"}, {n:"Thatchfield Retail Centre",f:"All Day Cafe"}, {n:"Ridgeview",f:"All Day Cafe"}, {n:"Bedford Centre",f:"All Day Cafe"}, {n:"Karaglen",f:"All Day Cafe"}, {n:"Mushroom Farm",f:"All Day Cafe"}, {n:"Hyde Park",f:"All Day Cafe"}, {n:"Sandton Gate",f:"All Day Cafe"}, {n:"Three Rivers",f:"All Day Cafe"}, {n:"Douglasdale",f:"All Day Cafe"}, {n:"Parkhurst",f:"All Day Cafe"}, {n:"Sunninghill Village",f:"XS"}, {n:"Bram Fischer",f:"XS"}, {n:"Clearwater Mall",f:"XS"}, {n:"Delta Central",f:"XS"}, {n:"Mall of Africa",f:"XS"}, {n:"Woodmead XS",f:"XS"}, {n:"Alzu Rayton",f:"XS Petroleum/C-Store"}, {n:"Bedford Sqaure Planet Fitness",f:"XS Kiosk"}, {n:"Winchester Hill XS",f:"XS Petroleum/C-Store"}, {n:"Campbells",f:"XS Petroleum/C-Store"}, {n:"Sizan",f:"XS Petroleum/C-Store"}, {n:"Simmonds",f:"XS Petroleum/C-Store"}],
-    "North West": [{n:"Mooirivier Mall, Potchefstroom",f:"All Day Cafe"}, {n:"Mafikeng",f:"XS Petroleum/C-Store"}, {n:"Cashan",f:"XS Petroleum/C-Store"}],
-    "KZN": [{n:"Musgrave Centre",f:"All Day Cafe"}, {n:"The Pearls",f:"All Day Cafe"}, {n:"Gateway",f:"XS"}],
-    "Free State": [{n:"Preller Walk",f:"All Day Cafe"}, {n:"Woodland Hills",f:"All Day Cafe"}],
-    "Mpumalanga": [{n:"Middleburg",f:"XS"}, {n:"Alzu Petroport N4",f:"XS Petroleum/C-Store"}, {n:"Route N4",f:"XS Petroleum/C-Store"}, {n:"Steiltes",f:"XS Petroleum/C-Store"}],
-    "Eastern Cape": [{n:"Vincent Park",f:"All Day Cafe"}, {n:"Boardwalk",f:"All Day Cafe"}, {n:"Walmer Park",f:"All Day Cafe"}, {n:"Sunridge Spar XS",f:"XS"}],
-    "Limpopo": [{n:"Thabazimbi",f:"XS Petroleum/C-Store"}, {n:"Hoedspruit",f:"XS Petroleum/C-Store"}, {n:"N12 East",f:"XS Petroleum/C-Store"}],
-    "Northern Cape": [{n:"Lennox Kimberly",f:"XS Petroleum/C-Store"}, {n:"Springbok",f:"XS"}],
-    "Namibia": [{n:"The Grove",f:"All Day Cafe"}, {n:"Windoek CBD",f:"XS"}],
-  };
-
-  var FORMAT_OPTIONS = [
-    { value: 'All Day Cafe', label: 'All Day Cafes' },
-    { value: 'XS', label: 'XS' },
-    { value: 'XS Kiosk', label: 'XS Kiosk' },
-    { value: 'XS Petroleum/C-Store', label: 'XS Petroleum/C-Store' },
-    { value: 'ALL', label: 'All Formats' },
-  ];
-  var EXEMPTION_REASONS = ['Trading Hours', 'N/A Café Format', 'N/A Café Offering'];
-
-  var FLAT_STORES = [];
-  Object.keys(STORES_DATA).forEach(function (region) {
-    STORES_DATA[region].forEach(function (s) { FLAT_STORES.push({ name: s.n, region: region, format: s.f }); });
+function setSessionCookie(res, admin) {
+  const token = jwt.sign({ id: admin.id, username: admin.username, displayName: admin.display_name }, JWT_SECRET, { expiresIn: '30d' });
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
   });
+}
 
-  function storesByFormat(formatValue) {
-    if (formatValue === 'ALL') return FLAT_STORES.slice();
-    return FLAT_STORES.filter(function (s) { return s.format === formatValue; });
+function getSessionUser(req) {
+  const token = req.cookies[COOKIE_NAME];
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) {
+    return null;
   }
+}
 
-  function defaultTemplate() {
-    return {
-      checklist_items: [
-        { id: 'it1', label: 'Posters displayed', requires_photo: true, input_type: 'yesno' },
-        { id: 'it2', label: 'GAAP POS updated', requires_photo: false, input_type: 'yesno' },
-        { id: 'it3', label: 'New retail price tags displayed', requires_photo: false, input_type: 'yesno' },
-        { id: 'it4', label: 'All outdated collateral has been removed and discarded', requires_photo: false, input_type: 'checkbox' },
-      ],
-      conditional: {
-        enabled: true,
-        trigger_label: 'Is this a CPT Non-Halal Hybrid store?',
-        items: [
-          { id: 'ct1', label: 'Babylonstoren collateral displayed', requires_photo: true, input_type: 'yesno' },
-          { id: 'ct2', label: 'Babylonstoren Bloodorange stock available', requires_photo: true, input_type: 'yesno' },
-        ],
+function requireAuth(req, res, next) {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  req.admin = user;
+  next();
+}
+
+// ---------- Health ----------
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// ---------- Auth ----------
+app.get('/api/auth/status', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM admins`);
+    const hasAdmins = rows[0].c > 0;
+    const user = getSessionUser(req);
+    res.json({ hasAdmins, authenticated: !!user, username: user ? user.displayName : null });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to check auth status' });
+  }
+});
+
+app.post('/api/auth/bootstrap', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM admins`);
+    if (rows[0].c > 0) return res.status(409).json({ error: 'An admin account already exists — please log in instead.' });
+
+    const { username, password, displayName } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+
+    const id = genId('adm');
+    const hash = await bcrypt.hash(password, 10);
+    const uname = username.trim().toLowerCase();
+    await pool.query(
+      `INSERT INTO admins (id, username, password_hash, display_name) VALUES ($1,$2,$3,$4)`,
+      [id, uname, hash, displayName || username]
+    );
+    setSessionCookie(res, { id, username: uname, display_name: displayName || username });
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create admin account' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+    const uname = username.trim().toLowerCase();
+    const { rows } = await pool.query(`SELECT * FROM admins WHERE username = $1`, [uname]);
+    if (!rows.length) return res.status(401).json({ error: 'Incorrect username or password' });
+    const admin = rows[0];
+    const ok = await bcrypt.compare(password, admin.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Incorrect username or password' });
+    setSessionCookie(res, admin);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie(COOKIE_NAME);
+  res.json({ ok: true });
+});
+
+app.get('/api/admins', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT id, username, display_name FROM admins ORDER BY created_at ASC`);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch admins' });
+  }
+});
+
+app.post('/api/admins', requireAuth, async (req, res) => {
+  try {
+    const { username, password, displayName } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+    const uname = username.trim().toLowerCase();
+    const existing = await pool.query(`SELECT id FROM admins WHERE username = $1`, [uname]);
+    if (existing.rows.length) return res.status(409).json({ error: 'That username is already taken' });
+
+    const id = genId('adm');
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query(
+      `INSERT INTO admins (id, username, password_hash, display_name) VALUES ($1,$2,$3,$4)`,
+      [id, uname, hash, displayName || username]
+    );
+    res.status(201).json({ id, username: uname, display_name: displayName || username });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create admin' });
+  }
+});
+
+// Edit an admin's username / display name / (optionally) password
+app.patch('/api/admins/:id', requireAuth, async (req, res) => {
+  try {
+    const { username, password, displayName } = req.body;
+    const existing = await pool.query(`SELECT * FROM admins WHERE id = $1`, [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Admin not found' });
+    const cur = existing.rows[0];
+
+    let uname = cur.username;
+    if (username && username.trim().toLowerCase() !== cur.username) {
+      uname = username.trim().toLowerCase();
+      const clash = await pool.query(`SELECT id FROM admins WHERE username = $1 AND id <> $2`, [uname, req.params.id]);
+      if (clash.rows.length) return res.status(409).json({ error: 'That username is already taken' });
+    }
+
+    const newDisplayName = displayName ? displayName.trim() : cur.display_name;
+    const newHash = password ? await bcrypt.hash(password, 10) : cur.password_hash;
+
+    const { rows } = await pool.query(
+      `UPDATE admins SET username=$1, display_name=$2, password_hash=$3 WHERE id=$4 RETURNING id, username, display_name`,
+      [uname, newDisplayName, newHash, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update admin' });
+  }
+});
+
+// Delete an admin — refuses to remove the last remaining account so nobody gets locked out
+app.delete('/api/admins/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows: countRows } = await pool.query(`SELECT COUNT(*)::int AS c FROM admins`);
+    if (countRows[0].c <= 1) return res.status(400).json({ error: 'Cannot delete the last remaining admin account' });
+
+    const { rows } = await pool.query(`DELETE FROM admins WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Admin not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete admin' });
+  }
+});
+
+// ---------- Trackers ----------
+
+app.get('/api/trackers', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        t.*,
+        COALESCE(s.submission_count, 0)::int AS submission_count,
+        COALESCE(s.flagged_count, 0)::int AS flagged_count
+      FROM launch_trackers t
+      LEFT JOIN (
+        SELECT
+          tracker_id,
+          COUNT(*) AS submission_count,
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1 FROM jsonb_array_elements(answers) elem WHERE (elem->>'value')::boolean = false
+            )
+            OR (
+              conditional_triggered AND conditional_answers IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(conditional_answers) elem2 WHERE (elem2->>'value')::boolean = false
+              )
+            )
+          ) AS flagged_count
+        FROM submissions
+        GROUP BY tracker_id
+      ) s ON s.tracker_id = t.id
+      ORDER BY t.created_at DESC;
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch trackers' });
+  }
+});
+
+app.post('/api/trackers', requireAuth, async (req, res) => {
+  try {
+    const { name, formTitle, description, checklistItems, conditional, assignedCafes, exemptions } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Launch name is required' });
+    const id = genId('launch');
+    const { rows } = await pool.query(
+      `INSERT INTO launch_trackers (id, name, form_title, description, created_by, checklist_items, conditional, assigned_cafes, exemptions)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        id, name.trim(), (formTitle || name).trim(), description || null, req.admin.displayName,
+        JSON.stringify(checklistItems || []),
+        JSON.stringify(conditional || { enabled: false, trigger_label: '', items: [] }),
+        JSON.stringify(assignedCafes || []),
+        JSON.stringify(exemptions || []),
+      ]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create tracker' });
+  }
+});
+
+// PUBLIC — needed by the unauthenticated submission page (name/title/checklist only)
+app.get('/api/trackers/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Tracker not found' });
+
+    const subRes = await pool.query(`SELECT DISTINCT cafe FROM submissions WHERE tracker_id = $1`, [req.params.id]);
+    const tracker = rows[0];
+    tracker.submitted_cafes = subRes.rows.map((r) => r.cafe);
+    res.json(tracker);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch tracker' });
+  }
+});
+
+app.patch('/api/trackers/:id', requireAuth, async (req, res) => {
+  try {
+    const { active, name, formTitle, description, checklistItems, conditional, assignedCafes, exemptions } = req.body;
+    const existing = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Tracker not found' });
+    const cur = existing.rows[0];
+
+    const updated = {
+      active: typeof active === 'boolean' ? active : cur.active,
+      name: name ? name.trim() : cur.name,
+      form_title: formTitle ? formTitle.trim() : cur.form_title,
+      description: typeof description === 'string' ? description : cur.description,
+      checklist_items: checklistItems ? JSON.stringify(checklistItems) : JSON.stringify(cur.checklist_items),
+      conditional: conditional ? JSON.stringify(conditional) : JSON.stringify(cur.conditional),
+      assigned_cafes: assignedCafes ? JSON.stringify(assignedCafes) : JSON.stringify(cur.assigned_cafes),
+      exemptions: exemptions ? JSON.stringify(exemptions) : JSON.stringify(cur.exemptions),
+    };
+
+    const { rows } = await pool.query(
+      `UPDATE launch_trackers SET active=$1, name=$2, form_title=$3, description=$4, checklist_items=$5, conditional=$6, assigned_cafes=$7, exemptions=$8 WHERE id=$9 RETURNING *`,
+      [updated.active, updated.name, updated.form_title, updated.description, updated.checklist_items, updated.conditional, updated.assigned_cafes, updated.exemptions, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update tracker' });
+  }
+});
+
+// Update the comment/actioned status on one specific answer within a submission (admin follow-up)
+app.patch('/api/submissions/:id/answer', requireAuth, async (req, res) => {
+  try {
+    const { itemId, isConditional, comment, actioned } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+
+    const { rows } = await pool.query(`SELECT * FROM submissions WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Submission not found' });
+    const sub = rows[0];
+
+    const column = isConditional ? 'conditional_answers' : 'answers';
+    const list = sub[column] || [];
+    const idx = list.findIndex((a) => a.id === itemId);
+    if (idx === -1) return res.status(404).json({ error: 'Answer not found on this submission' });
+
+    list[idx] = {
+      ...list[idx],
+      comment: typeof comment === 'string' ? comment : (list[idx].comment || ''),
+      actioned: typeof actioned === 'boolean' ? actioned : !!list[idx].actioned,
+    };
+
+    await pool.query(
+      `UPDATE submissions SET ${column} = $1 WHERE id = $2`,
+      [JSON.stringify(list), req.params.id]
+    );
+    res.json({ ok: true, answer: list[idx] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update answer' });
+  }
+});
+
+// ---------- Insights ----------
+// Aggregated per-question breakdown + missing/exempt café reporting for a tracker
+app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
+  try {
+    const trackerRes = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
+    if (!trackerRes.rows.length) return res.status(404).json({ error: 'Tracker not found' });
+    const tracker = trackerRes.rows[0];
+
+    const subsRes = await pool.query(`SELECT * FROM submissions WHERE tracker_id = $1`, [req.params.id]);
+    const submissions = subsRes.rows;
+
+    const submittedCafes = Array.from(new Set(submissions.map((s) => s.cafe)));
+    const exemptions = tracker.exemptions || [];
+    const exemptCafeNames = exemptions.map((e) => e.cafe);
+    const norm = (s) => (s || '').trim().toLowerCase();
+
+    // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
+    const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
+
+    let missingCafes = [];
+    let submittedInScope = submittedCafes;
+    let unscopedSubmittedCafes = [];
+    if (assigned) {
+      const assignedNorm = assigned.map((c) => norm(c.name || c));
+      const exemptNorm = exemptCafeNames.map(norm);
+
+      // Only count a submission toward "Submitted" if its café is actually in the assigned list —
+      // otherwise a café submitted under a different/older name, or one outside this launch's
+      // format scope, would inflate "Submitted" without ever clearing "Not Yet Submitted".
+      submittedInScope = submittedCafes.filter((name) => assignedNorm.includes(norm(name)));
+      unscopedSubmittedCafes = submittedCafes.filter((name) => !assignedNorm.includes(norm(name)));
+
+      const submittedNorm = submittedCafes.map(norm);
+      missingCafes = assigned
+        .map((c) => c.name || c)
+        .filter((name) => !submittedNorm.includes(norm(name)) && !exemptNorm.includes(norm(name)));
+    }
+
+    function breakdown(items, getAnswers) {
+      return items.map((item) => {
+        const relevant = submissions.filter((s) => getAnswers(s) !== null);
+        let yesCount = 0, noCount = 0;
+        const noEntries = [];
+        relevant.forEach((s) => {
+          const ans = getAnswers(s) || [];
+          const match = ans.find((a) => a.id === item.id);
+          if (!match) return;
+          if (match.value === true) yesCount += 1;
+          else {
+            noCount += 1;
+            noEntries.push({
+              submissionId: s.id,
+              cafe: s.cafe,
+              comment: match.comment || '',
+              actioned: !!match.actioned,
+            });
+          }
+        });
+        return { id: item.id, label: item.label, yesCount, noCount, noEntries };
+      });
+    }
+
+    const questionBreakdown = breakdown(tracker.checklist_items, (s) => s.answers);
+    const conditionalBreakdown = tracker.conditional && tracker.conditional.enabled
+      ? breakdown(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
+      : [];
+
+    // ---- Summary stats ----
+    const submissionRate = assigned && assigned.length
+      ? Math.round((submittedInScope.length / assigned.length) * 1000) / 10
+      : null;
+
+    const allNoEntries = questionBreakdown.concat(conditionalBreakdown).flatMap((q) => q.noEntries);
+    const totalFlaggedInputs = allNoEntries.length;
+    const actionedFlaggedInputs = allNoEntries.filter((e) => e.actioned).length;
+    const pendingFlaggedInputs = totalFlaggedInputs - actionedFlaggedInputs;
+
+    function isSubmissionFlagged(s) {
+      const mainBad = (s.answers || []).some((a) => a.value === false);
+      const condBad = s.conditional_triggered && (s.conditional_answers || []).some((a) => a.value === false);
+      return mainBad || condBad;
+    }
+    const cleanSubmissions = submissions.filter((s) => !isSubmissionFlagged(s)).length;
+    const launchSuccessRate = submissions.length
+      ? Math.round((cleanSubmissions / submissions.length) * 1000) / 10
+      : null;
+
+    res.json({
+      tracker: { id: tracker.id, name: tracker.name, form_title: tracker.form_title },
+      totalAssigned: assigned ? assigned.length : null,
+      totalSubmitted: assigned ? submittedInScope.length : submittedCafes.length,
+      totalExempted: exemptions.length,
+      totalMissing: assigned ? missingCafes.length : null,
+      missingCafes,
+      exemptCafes: exemptions,
+      unscopedSubmittedCafes, // submissions received for cafés NOT in the current assigned list — worth reviewing
+      questionBreakdown,
+      conditionalBreakdown,
+      summary: {
+        submissionRate,          // % of assigned cafés that have submitted (null if not scoped to a format)
+        totalFlaggedInputs,      // total "No" answers across all questions
+        actionedFlaggedInputs,   // of those, how many are marked actioned
+        pendingFlaggedInputs,    // remaining un-actioned flagged inputs
+        launchSuccessRate,       // % of submissions with zero flagged answers
+        totalSubmissions: submissions.length,
+        cleanSubmissions,
       },
-    };
-  }
-
-  var idCounter = 0;
-  function genId(prefix) { idCounter += 1; return prefix + '_' + idCounter + '_' + Date.now().toString(36); }
-
-  var app = document.getElementById('app');
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to compute insights' });
   }
-  function fmtDate(d) {
-    var dt = new Date(d);
-    return dt.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
-      dt.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+});
+
+// ---------- Submissions ----------
+
+app.get('/api/trackers/:id/submissions', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM submissions WHERE tracker_id = $1 ORDER BY submitted_at DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch submissions' });
   }
+});
 
-  function api(path, opts) {
-    opts = opts || {};
-    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
-    opts.credentials = 'include';
-    if (opts.body && typeof opts.body !== 'string') opts.body = JSON.stringify(opts.body);
-    return fetch('/api' + path, opts).then(function (r) {
-      return r.json().then(function (data) {
-        if (!r.ok) { var e = new Error(data.error || 'Request failed'); e.status = r.status; throw e; }
-        return data;
-      });
-    });
-  }
+// PUBLIC — branches submit here, no login
+app.post('/api/trackers/:id/submissions', async (req, res) => {
+  try {
+    const trackerId = req.params.id;
+    const tracker = await pool.query(`SELECT id, active FROM launch_trackers WHERE id = $1`, [trackerId]);
+    if (!tracker.rows.length) return res.status(404).json({ error: 'Launch tracker not found' });
+    if (!tracker.rows[0].active) return res.status(403).json({ error: 'This launch tracker is archived and no longer accepting submissions' });
 
-  function compressImage(file) {
-    return new Promise(function (resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        var img = new Image();
-        img.onload = function () {
-          var maxDim = 900;
-          var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-          var canvas = document.createElement('canvas');
-          canvas.width = img.width * scale;
-          canvas.height = img.height * scale;
-          var ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.65));
-        };
-        img.onerror = reject;
-        img.src = e.target.result;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
+    const { cafe, region, submittedBy, answers, conditionalTriggered, conditionalAnswers, disclaimerConfirmed } = req.body;
 
-  function isFlagged(s) {
-    var mainBad = (s.answers || []).some(function (a) { return a.value === false; });
-    var condBad = s.conditional_triggered && (s.conditional_answers || []).some(function (a) { return a.value === false; });
-    return mainBad || condBad;
-  }
+    if (!cafe || !submittedBy) return res.status(400).json({ error: 'Café name and submitted by are required' });
+    if (!disclaimerConfirmed) return res.status(400).json({ error: 'You must confirm the launch disclaimer' });
 
-  // ---------------------- ROUTER ----------------------
-  function route() {
-    var path = window.location.pathname;
-    var mLaunch = path.match(/^\/launch\/([^\/]+)/);
-    var mTracker = path.match(/^\/tracker\/([^\/]+)/);
-    if (mLaunch) return renderSubmissionForm(mLaunch[1]); // public — no auth check
-    if (mTracker) return guardedRender(function () { renderTrackerDetail(mTracker[1]); });
-    return guardedRender(renderDashboard);
-  }
-  function navigate(path) { window.history.pushState({}, '', path); route(); }
-  window.addEventListener('popstate', route);
-
-  function guardedRender(fn) {
-    api('/auth/status').then(function (s) {
-      if (!s.hasAdmins) return renderLogin(true);
-      if (!s.authenticated) return renderLogin(false);
-      fn();
-    });
-  }
-
-  // ---------------------- LOGIN / BOOTSTRAP ----------------------
-  function renderLogin(isBootstrap) {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta">Launch Checklist Tracker</div></div>' +
-      '<div class="login-wrap"><div class="login-card">' +
-        '<h2>' + (isBootstrap ? 'Create Admin Account' : 'Admin Login') + '</h2>' +
-        '<div class="sub">' + (isBootstrap ? 'No admin account exists yet — set one up to access the dashboard' : 'Dashboard access is restricted to admins') + '</div>' +
-        (isBootstrap ? '<div class="field"><label>Your Name</label><input type="text" id="lgName" placeholder="e.g. Franlo"></div>' : '') +
-        '<div class="field"><label>Username</label><input type="text" id="lgUser" placeholder="e.g. franlo"></div>' +
-        '<div class="field"><label>Password</label><input type="password" id="lgPass" placeholder="••••••••"></div>' +
-        '<div id="lgError"></div>' +
-        '<button class="btn gold submit-btn" id="lgSubmit">' + (isBootstrap ? 'Create Account &amp; Continue' : 'Log In') + '</button>' +
-        '<div class="lock-note">' + (isBootstrap
-          ? 'This is the only account with dashboard access until you add teammates from Manage Admins.'
-          : 'The submission link branches use is separate and never requires a login.') +
-        '</div>' +
-      '</div></div>';
-
-    document.getElementById('lgSubmit').onclick = function () {
-      var errEl = document.getElementById('lgError');
-      errEl.innerHTML = '';
-      var username = document.getElementById('lgUser').value.trim();
-      var password = document.getElementById('lgPass').value;
-      if (!username || !password) { errEl.innerHTML = '<div class="error-msg">Please enter a username and password</div>'; return; }
-      var payload = { username: username, password: password };
-      if (isBootstrap) payload.displayName = document.getElementById('lgName').value.trim() || username;
-      api(isBootstrap ? '/auth/bootstrap' : '/auth/login', { method: 'POST', body: payload })
-        .then(function () { navigate('/'); })
-        .catch(function (e) { errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
-    };
-  }
-
-  // ---------------------- DASHBOARD ----------------------
-  function renderDashboard() {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta">' +
-        '<span class="who" id="whoUser"></span>' +
-        '<span class="link" id="insightsLink">Insights</span>' +
-        '<span class="link" id="manageAdminsLink">Manage Admins</span>' +
-        '<span class="link" id="logoutLink">Log Out</span>' +
-      '</div></div>' +
-      '<div class="page">' +
-        '<div class="page-header">' +
-          '<div><h1>Launch Trackers</h1><div class="sub">Menu &amp; product launch checklist submissions</div></div>' +
-          '<button class="btn gold" id="btnNewTracker">+ New Launch Tracker</button>' +
-        '</div>' +
-        '<div id="trackerList"><div class="empty-state">Loading…</div></div>' +
-      '</div>' +
-      '<div class="footer"><div>Bootlegger Coffee Co. · Internal Use Only</div><div>Generated via Claude</div></div>';
-
-    api('/auth/status').then(function (s) { document.getElementById('whoUser').textContent = s.username || ''; });
-    document.getElementById('insightsLink').onclick = function () { renderInsightsPicker(); };
-    document.getElementById('manageAdminsLink').onclick = function () { renderManageAdmins(); };
-    document.getElementById('logoutLink').onclick = function () { api('/auth/logout', { method: 'POST' }).then(function () { navigate('/'); }); };
-    document.getElementById('btnNewTracker').onclick = function () { openTemplateEditor(null); };
-
-    api('/trackers').then(function (trackers) {
-      var el = document.getElementById('trackerList');
-      if (!trackers.length) {
-        el.innerHTML = '<div class="empty-state">No launch trackers yet. Click "+ New Launch Tracker" to create one.</div>';
-        return;
-      }
-      el.innerHTML = '<div class="tracker-grid">' + trackers.map(trackerCardHtml).join('') + '</div>';
-      trackers.forEach(function (t) {
-        var card = document.getElementById('card-' + t.id);
-        if (card) card.onclick = function () { navigate('/tracker/' + t.id); };
-      });
-    }).catch(function (e) { if (e.status === 401) renderLogin(false); });
-  }
-
-  function trackerCardHtml(t) {
-    var statusPill = t.active ? '' : '<span class="pill archived">Archived</span>';
-    var flagPill = t.flagged_count > 0 ? '<span class="pill flag">' + t.flagged_count + ' Flagged</span>' : '<span class="pill up">All Clear</span>';
-    return '<div class="tracker-card" id="card-' + t.id + '">' +
-      '<div class="t-name">' + esc(t.name) + '</div>' +
-      '<div class="t-desc">' + esc(t.description || '') + '</div>' +
-      '<div class="t-stats">' +
-        '<div><div class="t-stat-value">' + t.submission_count + '</div><div class="t-stat-label">Submissions</div></div>' +
-        '<div>' + statusPill + ' ' + (t.submission_count > 0 ? flagPill : '') + '</div>' +
-      '</div>' +
-    '</div>';
-  }
-
-  // ---------------------- MANAGE ADMINS ----------------------
-  function renderManageAdmins() {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta"><span class="link" id="backNav">&larr; Dashboard</span></div></div>' +
-      '<div class="page">' +
-        '<div class="page-header"><div><h1>Manage Admins</h1><div class="sub">Everyone listed here can log into the dashboard</div></div></div>' +
-        '<div class="card" style="margin-bottom:20px;">' +
-          '<div class="field"><label>Name</label><input type="text" id="maName"></div>' +
-          '<div class="field"><label>Username</label><input type="text" id="maUser"></div>' +
-          '<div class="field"><label>Password</label><input type="password" id="maPass"></div>' +
-          '<div id="maError"></div>' +
-          '<button class="btn gold" id="maAdd">+ Add Admin</button>' +
-        '</div>' +
-        '<div id="adminList"><div class="empty-state">Loading…</div></div>' +
-      '</div>';
-    document.getElementById('backNav').onclick = function () { navigate('/'); };
-    document.getElementById('maAdd').onclick = function () {
-      var errEl = document.getElementById('maError'); errEl.innerHTML = '';
-      var name = document.getElementById('maName').value.trim();
-      var user = document.getElementById('maUser').value.trim();
-      var pass = document.getElementById('maPass').value;
-      if (!user || !pass) { errEl.innerHTML = '<div class="error-msg">Username and password are required</div>'; return; }
-      api('/admins', { method: 'POST', body: { username: user, password: pass, displayName: name || user } })
-        .then(function () { document.getElementById('maName').value = ''; document.getElementById('maUser').value = ''; document.getElementById('maPass').value = ''; loadAdmins(); })
-        .catch(function (e) { errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
-    };
-    loadAdmins();
-  }
-  function loadAdmins() {
-    api('/admins').then(function (admins) {
-      document.getElementById('adminList').innerHTML = '<div class="card" style="padding:0;">' +
-        '<table class="data-table"><thead><tr><th>Name</th><th>Username</th><th></th></tr></thead><tbody>' +
-        admins.map(function (a) {
-          return '<tr><td>' + esc(a.display_name) + '</td><td>' + esc(a.username) + '</td><td style="text-align:right;">' +
-            '<button class="btn outline small" data-edit="' + a.id + '" style="margin-right:6px;">Edit</button>' +
-            '<button class="btn outline small" data-del="' + a.id + '">Delete</button></td></tr>';
-        }).join('') +
-        '</tbody></table></div>';
-      admins.forEach(function (a) {
-        var editBtn = document.querySelector('[data-edit="' + a.id + '"]');
-        var delBtn = document.querySelector('[data-del="' + a.id + '"]');
-        if (editBtn) editBtn.onclick = function () { openEditAdminModal(a); };
-        if (delBtn) delBtn.onclick = function () { confirmDeleteAdmin(a); };
-      });
-    });
-  }
-
-  function openEditAdminModal(admin) {
-    var backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
-    backdrop.innerHTML = '<div class="modal">' +
-      '<h3>Edit Admin</h3>' +
-      '<div class="field"><label>Name</label><input type="text" id="eaName" value="' + esc(admin.display_name) + '"></div>' +
-      '<div class="field"><label>Username</label><input type="text" id="eaUser" value="' + esc(admin.username) + '"></div>' +
-      '<div class="field"><label>New Password (leave blank to keep unchanged)</label><input type="password" id="eaPass" placeholder="••••••••"></div>' +
-      '<div id="eaError"></div>' +
-      '<div class="modal-actions"><button class="btn outline" id="eaCancel">Cancel</button><button class="btn gold" id="eaSave">Save Changes</button></div>' +
-    '</div>';
-    document.body.appendChild(backdrop);
-    backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
-    document.getElementById('eaCancel').onclick = function () { backdrop.remove(); };
-    document.getElementById('eaSave').onclick = function () {
-      var errEl = document.getElementById('eaError'); errEl.innerHTML = '';
-      var name = document.getElementById('eaName').value.trim();
-      var user = document.getElementById('eaUser').value.trim();
-      var pass = document.getElementById('eaPass').value;
-      if (!user) { errEl.innerHTML = '<div class="error-msg">Username is required</div>'; return; }
-      var payload = { username: user, displayName: name || user };
-      if (pass) payload.password = pass;
-      api('/admins/' + admin.id, { method: 'PATCH', body: payload })
-        .then(function () { backdrop.remove(); loadAdmins(); })
-        .catch(function (e) { errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
-    };
-  }
-
-  function confirmDeleteAdmin(admin) {
-    var backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
-    backdrop.innerHTML = '<div class="modal">' +
-      '<h3>Delete Admin</h3>' +
-      '<p style="font-size:12px;color:var(--grey-700);">Remove <strong>' + esc(admin.display_name) + '</strong> (' + esc(admin.username) + ')? They will no longer be able to log into the dashboard.</p>' +
-      '<div id="daError"></div>' +
-      '<div class="modal-actions"><button class="btn outline" id="daCancel">Cancel</button><button class="btn gold" id="daConfirm">Delete</button></div>' +
-    '</div>';
-    document.body.appendChild(backdrop);
-    backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
-    document.getElementById('daCancel').onclick = function () { backdrop.remove(); };
-    document.getElementById('daConfirm').onclick = function () {
-      api('/admins/' + admin.id, { method: 'DELETE' })
-        .then(function () { backdrop.remove(); loadAdmins(); })
-        .catch(function (e) { document.getElementById('daError').innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
-    };
-  }
-
-  // ---------------------- INSIGHTS ----------------------
-  function renderInsightsPicker() {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta"><span class="link" id="backNav">&larr; Dashboard</span></div></div>' +
-      '<div class="page">' +
-        '<div class="page-header"><div><h1>Insights</h1><div class="sub">Select a launch tracker to see submission insights</div></div>' +
-          '<button class="btn outline" id="pdfExportBtn" style="display:none;">Download PDF Report</button>' +
-        '</div>' +
-        '<div class="card"><div class="field" style="margin-bottom:0;"><label>Launch Tracker</label><select id="insightPicker"><option value="">Loading…</option></select></div></div>' +
-        '<div id="insightBody" style="margin-top:20px;"></div>' +
-      '</div>';
-    document.getElementById('backNav').onclick = function () { navigate('/'); };
-    api('/trackers').then(function (trackers) {
-      var sel = document.getElementById('insightPicker');
-      sel.innerHTML = '<option value="">Select a launch…</option>' +
-        trackers.map(function (t) { return '<option value="' + t.id + '">' + esc(t.name) + (t.active ? '' : ' (Archived)') + '</option>'; }).join('');
-      sel.onchange = function () {
-        if (sel.value) { loadInsights(sel.value); document.getElementById('pdfExportBtn').style.display = 'inline-block'; }
-        else { document.getElementById('insightBody').innerHTML = ''; document.getElementById('pdfExportBtn').style.display = 'none'; }
-      };
-    });
-  }
-
-  var currentInsightsData = null;
-
-  function loadInsights(trackerId) {
-    document.getElementById('insightBody').innerHTML = '<div class="empty-state">Loading…</div>';
-    api('/trackers/' + trackerId + '/insights').then(function (d) {
-      currentInsightsData = d;
-      document.getElementById('pdfExportBtn').onclick = function () { exportInsightsPDF(d); };
-
-      var scopeNote = d.totalAssigned === null
-        ? '<div class="hint">This launch wasn\'t scoped to a specific format/café list, so "not yet submitted" can\'t be calculated — only submitted results are shown.</div>'
-        : '';
-
-      var summaryHtml = '<div class="card" style="margin-bottom:20px;">' +
-        '<div class="tracker-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">' +
-          statBlock(d.totalAssigned === null ? '—' : d.totalAssigned, 'Assigned Cafés') +
-          statBlock(d.totalSubmitted, 'Submitted') +
-          statBlock(d.totalExempted, 'Exempted') +
-          statBlock(d.totalMissing === null ? '—' : d.totalMissing, 'Not Yet Submitted') +
-        '</div>' + scopeNote +
-      '</div>';
-
-      var missingHtml = '';
-      if (d.totalMissing !== null) {
-        missingHtml = '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">Not Yet Submitted (' + d.missingCafes.length + ')</div>' +
-          (d.missingCafes.length
-            ? '<div class="sub-answers">' + d.missingCafes.map(function (c) { return '<div class="answer-row"><span class="a-label">' + esc(c) + '</span></div>'; }).join('') + '</div>'
-            : '<div class="empty-state">All assigned cafés have submitted.</div>') +
-        '</div>';
-      }
-
-      var exemptHtml = '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">Exempted Cafés (' + d.exemptCafes.length + ')</div>' +
-        (d.exemptCafes.length
-          ? '<div class="sub-answers">' + d.exemptCafes.map(function (e) { return '<div class="answer-row"><span class="a-label">' + esc(e.cafe) + '</span><span style="color:var(--grey-500);font-size:10px;text-transform:uppercase;">' + esc(e.reason) + '</span></div>'; }).join('') + '</div>'
-          : '<div class="empty-state">No exemptions recorded for this launch.</div>') +
-      '</div>';
-
-      var unscopedHtml = '';
-      if (d.unscopedSubmittedCafes && d.unscopedSubmittedCafes.length) {
-        unscopedHtml = '<div class="card" style="margin-bottom:20px;border-color:var(--red-flag);">' +
-          '<div class="editor-section-title" style="margin-top:0;color:var(--red-flag);">Submissions Outside Current Café List (' + d.unscopedSubmittedCafes.length + ')</div>' +
-          '<div class="hint" style="margin-bottom:8px;">These cafés submitted for this launch but aren\'t in the currently assigned café list — likely because the café selection was edited after they submitted, or the café name doesn\'t exactly match (e.g. a rename). They still count in the question breakdown below, but not in "Submitted vs Assigned".</div>' +
-          '<div class="sub-answers">' + d.unscopedSubmittedCafes.map(function (c) { return '<div class="answer-row"><span class="a-label">' + esc(c) + '</span></div>'; }).join('') + '</div>' +
-        '</div>';
-      }
-
-      function questionBlock(title, items, isConditional) {
-        if (!items.length) return '';
-        return '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">' + esc(title) + '</div>' +
-          items.map(function (q) {
-            var flagged = q.noCount > 0 ? '<span class="pill flag">' + q.noCount + ' No</span>' : '<span class="pill up">All Yes</span>';
-            var negRows = q.noEntries.map(function (entry) {
-              var rowId = 'neg-' + entry.submissionId + '-' + q.id;
-              return '<div style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--grey-200);padding:10px;margin-top:8px;flex-wrap:wrap;">' +
-                '<div style="min-width:120px;font-size:12px;font-weight:700;">' + esc(entry.cafe) + '</div>' +
-                '<textarea data-comment-id="' + rowId + '" placeholder="Comment / action taken…" style="flex:1;min-width:180px;min-height:38px;padding:7px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + esc(entry.comment) + '</textarea>' +
-                '<label style="display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;white-space:nowrap;"><input type="checkbox" data-actioned-id="' + rowId + '"' + (entry.actioned ? ' checked' : '') + '> Actioned</label>' +
-                '<button class="btn outline small" data-save-id="' + rowId + '" data-sub="' + entry.submissionId + '" data-item="' + q.id + '" data-cond="' + (isConditional ? '1' : '0') + '">Save</button>' +
-                '<span class="hint" id="saved-' + rowId + '" style="width:100%;"></span>' +
-              '</div>';
-            }).join('');
-            return '<div style="border-bottom:1px solid var(--grey-200);padding:10px 0;">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:600;">' + esc(q.label) + '</span>' +
-              '<span>' + flagged + ' <span style="font-size:10px;color:var(--grey-500);">(' + q.yesCount + ' Yes)</span></span></div>' +
-              negRows +
-            '</div>';
-          }).join('') +
-        '</div>';
-      }
-
-      var s = d.summary || {};
-      var summaryFooterHtml = '<div class="card" style="margin-bottom:20px;">' +
-        '<div class="editor-section-title" style="margin-top:0;">Launch Summary</div>' +
-        '<div class="tracker-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">' +
-          statBlock(s.submissionRate === null ? '—' : s.submissionRate + '%', 'Submitted vs Assigned') +
-          statBlock(s.totalFlaggedInputs, 'Flagged Inputs') +
-          statBlock(s.actionedFlaggedInputs, 'Actioned') +
-          statBlock(s.pendingFlaggedInputs, 'Pending Action') +
-          statBlock(s.launchSuccessRate === null ? '—' : s.launchSuccessRate + '%', 'Launch Success Rate') +
-        '</div>' +
-        '<div class="hint" style="margin-top:10px;">' +
-          (s.submissionRate === null ? 'Submitted vs Assigned isn\'t available since this launch wasn\'t scoped to a specific café list. ' : '') +
-          'Launch Success Rate = % of submissions with zero flagged (No) answers.' +
-        '</div>' +
-      '</div>';
-
-      document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml + unscopedHtml +
-        questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
-        questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
-        summaryFooterHtml;
-
-      document.getElementById('insightBody').querySelectorAll('[data-save-id]').forEach(function (btn) {
-        btn.onclick = function () {
-          var rowId = btn.getAttribute('data-save-id');
-          var subId = btn.getAttribute('data-sub');
-          var itemId = btn.getAttribute('data-item');
-          var isCond = btn.getAttribute('data-cond') === '1';
-          var comment = document.querySelector('[data-comment-id="' + rowId + '"]').value;
-          var actioned = document.querySelector('[data-actioned-id="' + rowId + '"]').checked;
-          api('/submissions/' + subId + '/answer', { method: 'PATCH', body: { itemId: itemId, isConditional: isCond, comment: comment, actioned: actioned } })
-            .then(function () {
-              var savedEl = document.getElementById('saved-' + rowId);
-              savedEl.textContent = 'Saved ✓';
-              setTimeout(function () { savedEl.textContent = ''; }, 2000);
-            })
-            .catch(function (e) { alert('Failed to save: ' + e.message); });
-        };
-      });
-    }).catch(function (e) {
-      document.getElementById('insightBody').innerHTML = '<div class="card empty-state">Failed to load insights: ' + esc(e.message) + '</div>';
-    });
-  }
-
-  function statBlock(value, label) {
-    return '<div><div class="t-stat-value">' + value + '</div><div class="t-stat-label">' + esc(label) + '</div></div>';
-  }
-
-  function exportInsightsPDF(d) {
-    if (!window.jspdf) { alert('PDF library still loading — please try again in a moment.'); return; }
-    var doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
-    var y = 50;
-    var pageWidth = doc.internal.pageSize.getWidth();
-    var marginLeft = 40;
-    var maxWidth = pageWidth - marginLeft * 2;
-
-    function ensureSpace(lines) {
-      if (y + lines * 14 > 780) { doc.addPage(); y = 50; }
-    }
-    function heading(text) {
-      ensureSpace(2);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-      doc.text(text, marginLeft, y); y += 20;
-    }
-    function subheading(text) {
-      ensureSpace(2);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-      doc.text(text, marginLeft, y); y += 16;
-    }
-    function body(text) {
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-      var lines = doc.splitTextToSize(text, maxWidth);
-      ensureSpace(lines.length);
-      doc.text(lines, marginLeft, y);
-      y += lines.length * 13 + 4;
+    // One submission per café per launch — friendly pre-check (the unique index below is the authoritative guard)
+    const dupe = await pool.query(
+      `SELECT id FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2))`,
+      [trackerId, cafe]
+    );
+    if (dupe.rows.length) {
+      return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
     }
 
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('Bootlegger Coffee Co. — Launch Report', marginLeft, y); y += 24;
-    heading(d.tracker.name);
-    body('Generated: ' + new Date().toLocaleString('en-ZA'));
-    y += 6;
-
-    subheading('Summary');
-    body('Assigned cafés: ' + (d.totalAssigned === null ? 'N/A (open to all)' : d.totalAssigned));
-    body('Submitted: ' + d.totalSubmitted);
-    body('Exempted: ' + d.totalExempted);
-    body('Not yet submitted: ' + (d.totalMissing === null ? 'N/A' : d.totalMissing));
-    y += 6;
-
-    var s = d.summary || {};
-    subheading('Launch Success Summary');
-    body('Submitted vs Assigned: ' + (s.submissionRate === null ? 'N/A' : s.submissionRate + '%'));
-    body('Flagged inputs: ' + s.totalFlaggedInputs + '  (Actioned: ' + s.actionedFlaggedInputs + ', Pending: ' + s.pendingFlaggedInputs + ')');
-    body('Launch Success Rate: ' + (s.launchSuccessRate === null ? 'N/A' : s.launchSuccessRate + '%') + '  (' + s.cleanSubmissions + ' of ' + s.totalSubmissions + ' submissions with zero flags)');
-    y += 6;
-
-    if (d.totalMissing !== null) {
-      subheading('Not Yet Submitted (' + d.missingCafes.length + ')');
-      body(d.missingCafes.length ? d.missingCafes.join(', ') : 'All assigned cafés have submitted.');
-      y += 4;
-    }
-
-    subheading('Exempted Cafés (' + d.exemptCafes.length + ')');
-    body(d.exemptCafes.length ? d.exemptCafes.map(function (e) { return e.cafe + ' — ' + e.reason; }).join('; ') : 'None.');
-    y += 6;
-
-    function pdfQuestionSection(title, items) {
-      if (!items.length) return;
-      subheading(title);
-      items.forEach(function (q) {
-        body(q.label + '  (' + q.yesCount + ' Yes / ' + q.noCount + ' No)');
-        q.noEntries.forEach(function (entry) {
-          var actionedTag = entry.actioned ? '[Actioned]' : '[Pending]';
-          body('   • ' + entry.cafe + ' ' + actionedTag + (entry.comment ? ' — ' + entry.comment : ''));
-        });
-      });
-      y += 6;
-    }
-    pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
-    pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
-
-    doc.save((d.tracker.name || 'launch-report').replace(/[^a-z0-9]+/gi, '-') + '-report.pdf');
-  }
-
-  // ---------------------- TRACKER DETAIL ----------------------
-  function renderTrackerDetail(id) {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta"><span class="link" id="logoutLink2">Log Out</span></div></div>' +
-      '<div class="page">' +
-        '<a class="back-link" id="backBtn">&larr; All Launch Trackers</a>' +
-        '<div id="trackerDetail" style="margin-top:16px;"><div class="empty-state">Loading…</div></div>' +
-      '</div>' +
-      '<div class="footer"><div>Bootlegger Coffee Co. · Internal Use Only</div><div>Generated via Claude</div></div>';
-    document.getElementById('backBtn').onclick = function () { navigate('/'); };
-    document.getElementById('logoutLink2').onclick = function () { api('/auth/logout', { method: 'POST' }).then(function () { navigate('/'); }); };
-
-    Promise.all([api('/trackers/' + id), api('/trackers/' + id + '/submissions')])
-      .then(function (results) { renderTrackerDetailContent(results[0], results[1]); })
-      .catch(function (e) { if (e.status === 401) renderLogin(false); });
-  }
-
-  function renderTrackerDetailContent(tracker, submissions) {
-    var link = window.location.origin + '/launch/' + tracker.id;
-    var flagged = submissions.filter(isFlagged).length;
-
-    var html =
-      '<div class="page-header">' +
-        '<div><h1>' + esc(tracker.name) + '</h1><div class="sub">' + esc(tracker.description || 'Menu / product launch') + '</div></div>' +
-        '<span class="badge">' + submissions.length + ' Submitted' + (flagged ? ' · ' + flagged + ' Flagged' : '') + '</span>' +
-      '</div>' +
-      '<div class="card" style="margin-bottom:20px;">' +
-        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Submission Link — share with branches, no login required</div>' +
-        '<div class="link-row"><input type="text" readonly id="shareLink" value="' + esc(link) + '"><button class="btn outline" id="copyLinkBtn">Copy</button>' +
-        '<button class="btn outline" id="editTemplateBtn">Edit Template</button>' +
-        '<button class="btn ' + (tracker.active ? 'outline' : 'gold') + '" id="toggleActiveBtn">' + (tracker.active ? 'Archive' : 'Reactivate') + '</button></div>' +
-        '<div style="font-size:10px;color:var(--grey-500);margin-top:8px;">Public form title shown to branches: <strong>' + esc(tracker.form_title) + '</strong></div>' +
-      '</div>';
-
-    if (!submissions.length) {
-      html += '<div class="card empty-state">No submissions yet. Share the link above with each branch.</div>';
-    } else {
-      html += submissions.map(submissionCardHtml).join('');
-    }
-
-    document.getElementById('trackerDetail').innerHTML = html;
-    document.getElementById('copyLinkBtn').onclick = function () {
-      navigator.clipboard.writeText(link).then(function () {
-        var b = document.getElementById('copyLinkBtn');
-        b.textContent = 'Copied!';
-        setTimeout(function () { b.textContent = 'Copy'; }, 1500);
-      });
-    };
-    document.getElementById('editTemplateBtn').onclick = function () { openTemplateEditor(tracker); };
-    document.getElementById('toggleActiveBtn').onclick = function () {
-      api('/trackers/' + tracker.id, { method: 'PATCH', body: { active: !tracker.active } })
-        .then(function () { renderTrackerDetail(tracker.id); });
-    };
-
-    submissions.forEach(function (s) {
-      (s.answers || []).concat(s.conditional_answers || []).forEach(function (a) {
-        if (a.photo) {
-          var elImg = document.getElementById('thumb-' + s.id + '-' + a.id);
-          if (elImg) elImg.onclick = function () { openLightbox(a.photo); };
-        }
-      });
-    });
-  }
-
-  function checkIcon(v) { return v ? '<span class="check-ok">✓ Yes</span>' : '<span class="check-bad">✕ No</span>'; }
-
-  function submissionCardHtml(s) {
-    var flaggedBadge = isFlagged(s) ? '<span class="pill flag">Flagged</span>' : '<span class="pill up">All Clear</span>';
-    var answerRows = (s.answers || []).map(function (a) { return answerRowHtml(s.id, a); }).join('');
-    var condBlock = '';
-    if (s.conditional_triggered) {
-      condBlock = '<div style="margin-top:10px;"><span class="conditional-tag">Conditional Section Triggered</span><div class="sub-answers">' +
-        (s.conditional_answers || []).map(function (a) { return answerRowHtml(s.id, a); }).join('') + '</div></div>';
-    }
-    return '<div class="sub-card">' +
-      '<div class="sub-top">' +
-        '<div><div class="sub-cafe">' + esc(s.cafe) + '</div><div class="sub-meta">' + esc(s.submitted_by) + ' · ' + fmtDate(s.submitted_at) + '</div></div>' +
-        flaggedBadge +
-      '</div>' +
-      '<div class="sub-answers">' + answerRows + '</div>' +
-      condBlock +
-    '</div>';
-  }
-
-  function answerRowHtml(subId, a) {
-    var photo = a.photo ? '<img class="thumb" id="thumb-' + subId + '-' + a.id + '" src="' + a.photo + '" title="' + esc(a.label) + '">' : '';
-    return '<div class="answer-row"><span class="a-label">' + esc(a.label) + '</span>' + checkIcon(a.value) + '</div>' + (photo ? '<div>' + photo + '</div>' : '');
-  }
-
-  function openLightbox(src) {
-    var backdrop = document.createElement('div');
-    backdrop.className = 'lightbox-backdrop';
-    backdrop.innerHTML = '<img src="' + src + '">';
-    backdrop.onclick = function () { backdrop.remove(); };
-    document.body.appendChild(backdrop);
-  }
-
-  // ---------------------- TEMPLATE EDITOR (create + edit) ----------------------
-  function openTemplateEditor(existingTracker) {
-    var isEdit = !!existingTracker;
-    var data = isEdit
-      ? JSON.parse(JSON.stringify({
-          name: existingTracker.name, form_title: existingTracker.form_title, description: existingTracker.description,
-          checklist_items: existingTracker.checklist_items, conditional: existingTracker.conditional,
-          assigned_cafes: existingTracker.assigned_cafes || [], exemptions: existingTracker.exemptions || [],
-        }))
-      : Object.assign({ name: '', form_title: '', description: '', assigned_cafes: [], exemptions: [] }, defaultTemplate());
-
-    var backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
-    backdrop.innerHTML = '<div class="modal wide">' +
-      '<h3>' + (isEdit ? 'Edit Launch Template' : 'New Launch Tracker') + '</h3>' +
-      '<div class="field"><label>Launch Name (internal, shown on dashboard)</label><input type="text" id="teName" value="' + esc(data.name) + '" placeholder="e.g. Winter Menu Launch 2026"></div>' +
-      '<div class="field"><label>Submission Form Title (what branches see)</label><input type="text" id="teFormTitle" value="' + esc(data.form_title) + '" placeholder="Defaults to the launch name if left blank">' +
-        '<div class="hint">This can be different from the internal launch name — e.g. simpler or more branch-friendly wording.</div></div>' +
-      '<div class="field"><label>Description (optional)</label><input type="text" id="teDesc" value="' + esc(data.description || '') + '"></div>' +
-
-      '<div class="editor-section-title">Café Selection</div>' +
-      '<div class="hint" style="margin-bottom:10px;">Pick a format to load its cafés, then untick any you want to exclude. Leave empty to make this launch open to all cafés.</div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="formatButtons">' +
-        FORMAT_OPTIONS.map(function (f) { return '<button type="button" class="btn outline small" data-format="' + esc(f.value) + '">' + esc(f.label) + '</button>'; }).join('') +
-      '</div>' +
-      '<div id="cafeCountLabel" style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px;"></div>' +
-      '<div id="cafeChecklist" style="max-height:260px;overflow-y:auto;border:1px solid var(--grey-200);padding:10px;"></div>' +
-
-      '<div class="editor-section-title">Exemptions</div>' +
-      '<div class="hint" style="margin-bottom:10px;">Exempt a café from this launch (e.g. trading hours, format not applicable). Exempted cafés are excluded from "not yet submitted" reporting in Insights.</div>' +
-      '<div id="exemptionForm" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;"></div>' +
-      '<div id="exemptionsList"></div>' +
-
-      '<div class="editor-section-title">Checklist Items</div>' +
-      '<div id="itemsList"></div>' +
-      '<div class="add-item-btn" id="addItemBtn">+ Add Check Item</div>' +
-
-      '<div class="editor-section-title">Conditional Section (e.g. store-type specific checks)</div>' +
-      '<div class="conditional-toggle-row"><span class="label" style="font-size:12px;font-weight:600;">Enable a conditional section</span>' +
-        '<div class="toggle-group" id="condToggle">' +
-          '<button type="button" class="toggle-btn yes' + (data.conditional.enabled ? ' active' : '') + '" data-val="true">Yes</button>' +
-          '<button type="button" class="toggle-btn no' + (!data.conditional.enabled ? ' active' : '') + '" data-val="false">No</button>' +
-        '</div></div>' +
-      '<div id="condBody" style="display:' + (data.conditional.enabled ? 'block' : 'none') + ';">' +
-        '<div class="field"><label>Trigger Question (shown as a Yes/No toggle on the form)</label><input type="text" id="teCondLabel" value="' + esc(data.conditional.trigger_label) + '" placeholder="e.g. Is this a CPT Non-Halal Hybrid store?"></div>' +
-        '<div id="condItemsList"></div>' +
-        '<div class="add-item-btn" id="addCondItemBtn">+ Add Conditional Check Item</div>' +
-      '</div>' +
-
-      '<div id="teError"></div>' +
-      '<div class="modal-actions"><button class="btn outline" id="teCancel">Cancel</button><button class="btn gold" id="teSave">' + (isEdit ? 'Save Changes' : 'Create Launch Tracker') + '</button></div>' +
-    '</div>';
-    document.body.appendChild(backdrop);
-    backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
-    document.getElementById('teCancel').onclick = function () { backdrop.remove(); };
-
-    // ---- Café checklist ----
-    function renderCafeChecklist() {
-      var byRegion = {};
-      data.assigned_cafes.forEach(function (s) {
-        var region = s.region || 'OTHER';
-        if (!byRegion[region]) byRegion[region] = [];
-        byRegion[region].push(s);
-      });
-      var countLabel = document.getElementById('cafeCountLabel');
-      countLabel.textContent = data.assigned_cafes.length
-        ? data.assigned_cafes.length + ' café' + (data.assigned_cafes.length === 1 ? '' : 's') + ' assigned'
-        : 'No cafés selected — open to all cafés';
-
-      var el = document.getElementById('cafeChecklist');
-      if (!data.assigned_cafes.length) {
-        el.innerHTML = '<div class="empty-state" style="padding:16px;">Pick a format above to load cafés.</div>';
-        return;
-      }
-      el.innerHTML = Object.keys(byRegion).sort().map(function (region) {
-        return '<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--grey-500);margin:10px 0 4px;">' + esc(region) + '</div>' +
-          byRegion[region].map(function (s) {
-            return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;">' +
-              '<input type="checkbox" checked data-cafe="' + esc(s.name) + '"> ' + esc(s.name) + '</label>';
-          }).join('');
-      }).join('');
-      el.querySelectorAll('input[data-cafe]').forEach(function (cb) {
-        cb.addEventListener('change', function () {
-          if (!cb.checked) {
-            var cafeName = cb.getAttribute('data-cafe');
-            data.assigned_cafes = data.assigned_cafes.filter(function (s) { return s.name !== cafeName; });
-            renderCafeChecklist();
-            renderExemptionForm();
-          }
-        });
-      });
-    }
-
-    document.getElementById('formatButtons').querySelectorAll('button[data-format]').forEach(function (btn) {
-      btn.onclick = function () {
-        data.assigned_cafes = storesByFormat(btn.getAttribute('data-format'));
-        renderCafeChecklist();
-        renderExemptionForm();
-      };
-    });
-
-    // ---- Exemptions ----
-    function renderExemptionForm() {
-      var formEl = document.getElementById('exemptionForm');
-      if (!data.assigned_cafes.length) {
-        formEl.innerHTML = '<div class="hint">Select a format above first to add café exemptions.</div>';
-        return;
-      }
-      formEl.innerHTML =
-        '<select id="exCafe" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' +
-          data.assigned_cafes.map(function (s) { return '<option value="' + esc(s.name) + '">' + esc(s.name) + '</option>'; }).join('') +
-        '</select>' +
-        '<select id="exReason" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' +
-          EXEMPTION_REASONS.map(function (r) { return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('') +
-        '</select>' +
-        '<button type="button" class="btn outline small" id="addExemptionBtn">+ Add Exemption</button>';
-      document.getElementById('addExemptionBtn').onclick = function () {
-        var cafe = document.getElementById('exCafe').value;
-        var reason = document.getElementById('exReason').value;
-        data.exemptions = data.exemptions.filter(function (e) { return e.cafe !== cafe; });
-        data.exemptions.push({ cafe: cafe, reason: reason });
-        renderExemptionsList();
-      };
-    }
-
-    function renderExemptionsList() {
-      var el = document.getElementById('exemptionsList');
-      if (!data.exemptions.length) {
-        el.innerHTML = '<div class="empty-state" style="padding:10px 0;">No exemptions added.</div>';
-        return;
-      }
-      el.innerHTML = data.exemptions.map(function (e, idx) {
-        return '<div class="item-row"><span style="flex:1;font-size:12px;">' + esc(e.cafe) + ' — <span style="color:var(--grey-500);">' + esc(e.reason) + '</span></span>' +
-          '<span class="remove-item" data-ex-idx="' + idx + '">✕</span></div>';
-      }).join('');
-      el.querySelectorAll('[data-ex-idx]').forEach(function (span) {
-        span.addEventListener('click', function () {
-          data.exemptions.splice(parseInt(span.getAttribute('data-ex-idx'), 10), 1);
-          renderExemptionsList();
-        });
-      });
-    }
-
-    renderCafeChecklist();
-    renderExemptionForm();
-    renderExemptionsList();
-
-    // ---- Checklist items (unchanged behaviour) ----
-    function renderItemRows(containerId, items) {
-      var c = document.getElementById(containerId);
-      c.innerHTML = items.map(function (it, idx) {
-        if (!it.input_type) it.input_type = 'yesno';
-        return '<div class="item-row" data-idx="' + idx + '">' +
-          '<input type="text" value="' + esc(it.label) + '" data-field="label">' +
-          '<label class="photo-toggle"><input type="checkbox" data-field="checkbox-only"' + (it.input_type === 'checkbox' ? ' checked' : '') + '> Tick-box only</label>' +
-          '<label class="photo-toggle"><input type="checkbox" data-field="photo"' + (it.requires_photo ? ' checked' : '') + '> Add Picture</label>' +
-          '<span class="remove-item" data-remove="1">✕</span>' +
-        '</div>';
-      }).join('');
-      c.querySelectorAll('.item-row').forEach(function (row) {
-        var idx = parseInt(row.getAttribute('data-idx'), 10);
-        row.querySelector('input[data-field=label]').addEventListener('input', function (e) { items[idx].label = e.target.value; });
-        row.querySelector('input[data-field=photo]').addEventListener('change', function (e) { items[idx].requires_photo = e.target.checked; });
-        row.querySelector('input[data-field="checkbox-only"]').addEventListener('change', function (e) { items[idx].input_type = e.target.checked ? 'checkbox' : 'yesno'; });
-        row.querySelector('.remove-item').addEventListener('click', function () { items.splice(idx, 1); renderItemRows(containerId, items); });
-      });
-    }
-
-    renderItemRows('itemsList', data.checklist_items);
-    renderItemRows('condItemsList', data.conditional.items);
-
-    document.getElementById('addItemBtn').onclick = function () {
-      data.checklist_items.push({ id: genId('it'), label: '', requires_photo: false, input_type: 'yesno' });
-      renderItemRows('itemsList', data.checklist_items);
-    };
-    document.getElementById('addCondItemBtn').onclick = function () {
-      data.conditional.items.push({ id: genId('ct'), label: '', requires_photo: false, input_type: 'yesno' });
-      renderItemRows('condItemsList', data.conditional.items);
-    };
-    document.getElementById('condToggle').querySelectorAll('.toggle-btn').forEach(function (btn) {
-      btn.onclick = function () {
-        document.getElementById('condToggle').querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        data.conditional.enabled = btn.getAttribute('data-val') === 'true';
-        document.getElementById('condBody').style.display = data.conditional.enabled ? 'block' : 'none';
-      };
-    });
-
-    document.getElementById('teSave').onclick = function () {
-      var errEl = document.getElementById('teError'); errEl.innerHTML = '';
-      var name = document.getElementById('teName').value.trim();
-      var formTitle = document.getElementById('teFormTitle').value.trim() || name;
-      var desc = document.getElementById('teDesc').value.trim();
-      data.conditional.trigger_label = document.getElementById('teCondLabel') ? document.getElementById('teCondLabel').value.trim() : data.conditional.trigger_label;
-
-      if (!name) { errEl.innerHTML = '<div class="error-msg">Launch name is required</div>'; return; }
-      var emptyItem = data.checklist_items.some(function (it) { return !it.label.trim(); });
-      if (emptyItem) { errEl.innerHTML = '<div class="error-msg">Every checklist item needs a label (or remove the blank one)</div>'; return; }
-      if (data.conditional.enabled) {
-        if (!data.conditional.trigger_label) { errEl.innerHTML = '<div class="error-msg">Conditional section needs a trigger question</div>'; return; }
-        var emptyCond = data.conditional.items.some(function (it) { return !it.label.trim(); });
-        if (emptyCond) { errEl.innerHTML = '<div class="error-msg">Every conditional item needs a label</div>'; return; }
-      }
-
-      var payload = {
-        name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional,
-        assignedCafes: data.assigned_cafes, exemptions: data.exemptions,
-      };
-      var req = isEdit
-        ? api('/trackers/' + existingTracker.id, { method: 'PATCH', body: payload })
-        : api('/trackers', { method: 'POST', body: payload });
-
-      req.then(function (t) {
-        backdrop.remove();
-        navigate('/tracker/' + t.id);
-      }).catch(function (e) { errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>'; });
-    };
-  }
-
-  // ---------------------- PUBLIC SUBMISSION FORM (no login) ----------------------
-  function renderSubmissionForm(trackerId) {
-    app.innerHTML =
-      '<div class="nav"><div class="logo">Bootlegger</div><div class="meta">Launch Checklist</div></div>' +
-      '<div class="form-wrap" id="formWrap"><div class="empty-state">Loading…</div></div>';
-
-    api('/trackers/' + trackerId).then(function (tracker) {
-      if (!tracker.active) {
-        document.getElementById('formWrap').innerHTML = '<div class="form-card empty-state">This launch tracker has been archived and is no longer accepting submissions.</div>';
-        return;
-      }
-      buildSubmissionForm(tracker);
-    }).catch(function () {
-      document.getElementById('formWrap').innerHTML = '<div class="form-card empty-state">Launch link not found. Please check the URL with your regional manager.</div>';
-    });
-  }
-
-  function buildSubmissionForm(tracker) {
-    var state = { cafe: '', submittedBy: '', conditionalTriggered: false, disclaimerConfirmed: false };
-    var answers = {};
-    var condAnswers = {};
-
-    tracker.checklist_items.forEach(function (it) { answers[it.id] = { value: null, photo: null }; });
-    (tracker.conditional.items || []).forEach(function (it) { condAnswers[it.id] = { value: null, photo: null }; });
-
-    // If this launch was assigned to a specific format/café selection, only show those cafés.
-    // Trackers created before this feature (or left as "All Formats") fall back to the full masterfile list.
-    var scoped = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : FLAT_STORES;
-    var submittedNorm = (tracker.submitted_cafes || []).map(function (c) { return c.trim().toLowerCase(); });
-    var byRegion = {};
-    scoped.forEach(function (s) {
-      var region = s.region || 'OTHER';
-      if (!byRegion[region]) byRegion[region] = [];
-      byRegion[region].push(s.name);
-    });
-    var storeOptions = '<option value="">Select your café…</option>' +
-      Object.keys(byRegion).map(function (region) {
-        return '<optgroup label="' + esc(region) + '">' +
-          byRegion[region].map(function (n) {
-            var already = submittedNorm.indexOf(n.trim().toLowerCase()) !== -1;
-            return '<option value="' + esc(n) + '"' + (already ? ' disabled' : '') + '>' + esc(n) + (already ? ' — Already Submitted' : '') + '</option>';
-          }).join('') +
-          '</optgroup>';
-      }).join('');
-
-    function cafeAlreadySubmitted(name) {
-      return submittedNorm.indexOf((name || '').trim().toLowerCase()) !== -1;
-    }
-
-    function itemBlockHtml(it) {
-      var photoBlock = it.requires_photo
-        ? '<div class="photo-block" id="photoBlock-' + it.id + '">' +
-            '<div class="ph-label">Photo (optional)</div>' +
-            '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + it.id + '"></label>' +
-            '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
-          '</div>'
-        : '';
-      var questionBlock = it.input_type === 'checkbox'
-        ? '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>'
-        : checkRow(it.id, esc(it.label));
-      return questionBlock + photoBlock;
-    }
-
-    var wrap = document.getElementById('formWrap');
-    wrap.innerHTML =
-      '<div class="form-card">' +
-        '<div class="form-title">' + esc(tracker.form_title) + '</div>' +
-        '<div class="form-sub">' + esc(tracker.description || 'Launch confirmation checklist') + '</div>' +
-
-        '<div class="field"><label>Café Name</label><select id="fCafe">' + storeOptions + '</select></div>' +
-        '<div class="field"><label>Submitted By</label><input type="text" id="fBy" placeholder="Your full name"></div>' +
-
-        (tracker.conditional.enabled ?
-          '<div class="field"><div class="check-row"><span class="label">' + esc(tracker.conditional.trigger_label) + '</span>' +
-            '<div class="toggle-group" data-field="conditionalTriggered">' +
-              '<button type="button" class="toggle-btn yes" data-val="true">Yes</button>' +
-              '<button type="button" class="toggle-btn no active" data-val="false">No</button>' +
-            '</div></div></div>' : '') +
-
-        tracker.checklist_items.map(itemBlockHtml).join('') +
-
-        (tracker.conditional.enabled ?
-          '<div id="hybridSection" style="display:none;"><div class="hybrid-section"><div class="section-tag">Additional Checks</div>' +
-            tracker.conditional.items.map(itemBlockHtml).join('') +
-          '</div></div>' : '') +
-
-        '<div class="disclaimer-box">' +
-          'By submitting the above, I confirm that my café has launched successfully.' +
-          '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>I confirm the above checklist is accurate and my café has launched successfully.</span></div>' +
-        '</div>' +
-
-        '<div id="formError"></div>' +
-        '<button class="btn gold submit-btn" id="submitBtn">Submit Launch Confirmation</button>' +
-      '</div>';
-
-    wrap.querySelectorAll('.toggle-group').forEach(function (group) {
-      var field = group.getAttribute('data-field');
-      group.querySelectorAll('.toggle-btn').forEach(function (btn) {
-        btn.onclick = function () {
-          group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          var val = btn.getAttribute('data-val') === 'true';
-          if (field === 'conditionalTriggered') {
-            state.conditionalTriggered = val;
-            var hs = document.getElementById('hybridSection');
-            if (hs) hs.style.display = val ? 'block' : 'none';
-          } else if (answers[field]) {
-            answers[field].value = val;
-          } else if (condAnswers[field]) {
-            condAnswers[field].value = val;
-          }
-        };
-      });
-    });
-
-    wrap.querySelectorAll('[data-checkbox-field]').forEach(function (cb) {
-      var field = cb.getAttribute('data-checkbox-field');
-      cb.addEventListener('change', function () {
-        var val = cb.checked ? true : null; // unchecked = not yet confirmed, blocks submission
-        if (answers[field]) answers[field].value = val;
-        else if (condAnswers[field]) condAnswers[field].value = val;
-      });
-    });
-
-    tracker.checklist_items.concat(tracker.conditional.items || []).forEach(function (it) {
-      if (!it.requires_photo) return;
-      var input = document.getElementById('photoInput-' + it.id);
-      if (!input) return;
-      input.addEventListener('change', function (e) {
-        var file = e.target.files[0];
-        if (!file) return;
-        compressImage(file).then(function (dataUrl) {
-          if (answers[it.id]) answers[it.id].photo = dataUrl;
-          if (condAnswers[it.id]) condAnswers[it.id].photo = dataUrl;
-          var img = document.getElementById('preview-' + it.id);
-          img.src = dataUrl; img.style.display = 'block';
-        }).catch(function () { alert('Could not process that photo — please try another.'); });
-      });
-    });
-
-    document.getElementById('submitBtn').onclick = function () {
-      state.cafe = document.getElementById('fCafe').value;
-      state.submittedBy = document.getElementById('fBy').value.trim();
-      state.disclaimerConfirmed = document.getElementById('fDisclaimer').checked;
-
-      var errEl = document.getElementById('formError');
-      errEl.innerHTML = '';
-      var missing = [];
-      if (!state.cafe) missing.push('Café name');
-      if (!state.submittedBy) missing.push('Submitted by');
-      tracker.checklist_items.forEach(function (it) { if (answers[it.id].value === null) missing.push(it.label); });
-      if (state.conditionalTriggered) {
-        (tracker.conditional.items || []).forEach(function (it) { if (condAnswers[it.id].value === null) missing.push(it.label); });
-      }
-      if (!state.disclaimerConfirmed) missing.push('Disclaimer confirmation');
-
-      if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
-
-      if (cafeAlreadySubmitted(state.cafe)) {
-        errEl.innerHTML = '<div class="error-msg">' + esc(state.cafe) + ' has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.</div>';
-        return;
-      }
-
-      var region = null;
-      var match = FLAT_STORES.find(function (s) { return s.name === state.cafe; });
-      if (match) region = match.region;
-
-      var btn = document.getElementById('submitBtn');
-      btn.disabled = true; btn.textContent = 'Submitting…';
-
-      var answerArr = tracker.checklist_items.map(function (it) { return { id: it.id, label: it.label, value: answers[it.id].value, photo: answers[it.id].photo }; });
-      var condArr = state.conditionalTriggered ? (tracker.conditional.items || []).map(function (it) { return { id: it.id, label: it.label, value: condAnswers[it.id].value, photo: condAnswers[it.id].photo }; }) : null;
-
-      api('/trackers/' + tracker.id + '/submissions', {
-        method: 'POST',
-        body: { cafe: state.cafe, region: region, submittedBy: state.submittedBy, answers: answerArr, conditionalTriggered: state.conditionalTriggered, conditionalAnswers:
+    const id = genId('sub');
+    await pool.query(
+      `INSERT INTO submissions (
+        id, tracker_id, cafe, region, submitted_by, answers, conditional_triggered, conditional_answers, disclaimer_confirmed
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        id, trackerId, cafe, region || null, submittedBy,
+        JSON.stringify(answers || []),
+        !!conditionalTriggered,
+        conditionalTriggered ? JSON.stringify(conditionalAnswers || []) : null,
+        !!disclaimerConfirmed,
+      ]
+ 
