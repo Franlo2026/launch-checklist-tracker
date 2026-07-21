@@ -102,19 +102,34 @@ function stripFormatSuffix(name) {
   n = n.replace(/\s+(xs\s*kiosk|xs\s*petroleum\/?c-?store|petroleum\/?c-?store|c-?store|kiosk|xs)\s*$/i, '');
   return n.trim();
 }
-// Returns the set of keys a café name could match under. When a direct alias exists (a known
-// ambiguous legacy name), it's used exclusively — this avoids e.g. "Aquarium (XS)" matching the
-// unrelated "Aquarium" (All Day Café) just because both happen to strip down to the same word.
-function cafeCandidateKeys(name) {
-  const raw = (name || '').trim().toLowerCase();
-  if (LEGACY_CAFE_ALIASES[raw]) return new Set([LEGACY_CAFE_ALIASES[raw]]);
-  return new Set([raw, stripFormatSuffix(name).toLowerCase()]);
-}
-function cafesMatch(nameA, nameB) {
-  const keysA = cafeCandidateKeys(nameA);
-  const keysB = cafeCandidateKeys(nameB);
-  for (const k of keysA) if (keysB.has(k)) return true;
-  return false;
+// Finds which candidate name a given café name refers to, checking in priority order so two
+// distinct *current* café names (e.g. "Aquarium" and "Aquarium Kiosk") can never collide with
+// each other — only a name with no exact match anywhere in the list falls through to legacy
+// alias/suffix-based reconciliation.
+//   1. Exact match (case/whitespace-insensitive) — always wins if present.
+//   2. Known direct alias for an ambiguous old-style name (e.g. "Aquarium (XS)" -> "Aquarium Kiosk").
+//   3. Generic legacy suffix stripping — only tried if the input actually had a suffix to strip,
+//      so a bare canonical name is never coerced into matching a different café by accident.
+function resolveCafeMatch(targetName, candidates) {
+  const raw = (targetName || '').trim().toLowerCase();
+  const exact = candidates.find((c) => (c || '').trim().toLowerCase() === raw);
+  if (exact) return exact;
+
+  if (LEGACY_CAFE_ALIASES[raw]) {
+    const aliasTarget = LEGACY_CAFE_ALIASES[raw];
+    const aliased = candidates.find((c) => {
+      const cRaw = (c || '').trim().toLowerCase();
+      return cRaw === aliasTarget || stripFormatSuffix(c).toLowerCase() === aliasTarget;
+    });
+    if (aliased) return aliased;
+  }
+
+  const stripped = stripFormatSuffix(targetName).toLowerCase();
+  if (stripped !== raw) {
+    const found = candidates.find((c) => (c || '').trim().toLowerCase() === stripped);
+    if (found) return found;
+  }
+  return null;
 }
 
 function setSessionCookie(res, admin) {
@@ -442,15 +457,27 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       const assignedNames = assigned.map((c) => c.name || c);
 
       // Only count a submission toward "Submitted" if its café matches the assigned list —
-      // matching goes through cafesMatch so a legacy name (e.g. "Salt River (XS)") still
+      // matching goes through resolveCafeMatch so a legacy name (e.g. "Salt River (XS)") still
       // correctly matches the current name ("Salt River") instead of inflating "Submitted"
-      // without ever clearing "Not Yet Submitted".
-      submittedInScope = submittedCafes.filter((name) => assignedNames.some((a) => cafesMatch(name, a)));
-      unscopedSubmittedCafes = submittedCafes.filter((name) => !assignedNames.some((a) => cafesMatch(name, a)));
+      // without ever clearing "Not Yet Submitted". Exact matches always take priority, so two
+      // distinct current cafés (e.g. "Aquarium" vs "Aquarium Kiosk") never get confused.
+      // Note: the submitted name must be passed as the target (not the assigned name), since
+      // legacy aliases are keyed by old-style submitted names.
+      const matchedAssignedNames = new Set();
+      submittedInScope = submittedCafes.filter((name) => {
+        const match = resolveCafeMatch(name, assignedNames);
+        if (match) matchedAssignedNames.add(match);
+        return match !== null;
+      });
+      unscopedSubmittedCafes = submittedCafes.filter((name) => resolveCafeMatch(name, assignedNames) === null);
 
-      missingCafes = assignedNames.filter((name) =>
-        !submittedCafes.some((s) => cafesMatch(s, name)) && !exemptCafeNames.some((e) => cafesMatch(e, name))
-      );
+      const exemptMatchedAssignedNames = new Set();
+      exemptCafeNames.forEach((name) => {
+        const match = resolveCafeMatch(name, assignedNames);
+        if (match) exemptMatchedAssignedNames.add(match);
+      });
+
+      missingCafes = assignedNames.filter((name) => !matchedAssignedNames.has(name) && !exemptMatchedAssignedNames.has(name));
     }
 
     function breakdown(items, getAnswers) {
@@ -548,9 +575,9 @@ app.get('/api/trackers/:id/submissions', requireAuth, async (req, res) => {
 app.post('/api/trackers/:id/submissions', async (req, res) => {
   try {
     const trackerId = req.params.id;
-    const tracker = await pool.query(`SELECT id, active FROM launch_trackers WHERE id = $1`, [trackerId]);
-    if (!tracker.rows.length) return res.status(404).json({ error: 'Launch tracker not found' });
-    if (!tracker.rows[0].active) return res.status(403).json({ error: 'This launch tracker is archived and no longer accepting submissions' });
+    const trackerRes = await pool.query(`SELECT id, active, assigned_cafes FROM launch_trackers WHERE id = $1`, [trackerId]);
+    if (!trackerRes.rows.length) return res.status(404).json({ error: 'Launch tracker not found' });
+    if (!trackerRes.rows[0].active) return res.status(403).json({ error: 'This launch tracker is archived and no longer accepting submissions' });
 
     const { cafe, region, submittedBy, answers, conditionalTriggered, conditionalAnswers, disclaimerConfirmed } = req.body;
 
@@ -558,10 +585,23 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
     if (!disclaimerConfirmed) return res.status(400).json({ error: 'You must confirm the launch disclaimer' });
 
     // One submission per café per launch — checked in JS so legacy naming (e.g. "Salt River (XS)")
-    // is recognised as the same café as its current name. The DB unique index is the raw-string
-    // backstop for exact repeat submissions under identical wording.
+    // is recognised as the same café as its current name. Names are first resolved against the
+    // tracker's assigned café list (the authoritative source) before comparing — this is what
+    // prevents two distinct current cafés (e.g. "Aquarium" vs "Aquarium Kiosk") from ever being
+    // treated as duplicates of each other just because one happens to be a prefix of the other.
+    const assignedNamesForDupeCheck = (trackerRes.rows[0].assigned_cafes && trackerRes.rows[0].assigned_cafes.length)
+      ? trackerRes.rows[0].assigned_cafes.map((c) => c.name || c)
+      : null;
+    function canonicalCafeForm(name) {
+      if (assignedNamesForDupeCheck) {
+        const match = resolveCafeMatch(name, assignedNamesForDupeCheck);
+        if (match) return match.trim().toLowerCase();
+      }
+      return (name || '').trim().toLowerCase();
+    }
     const existingRes = await pool.query(`SELECT cafe FROM submissions WHERE tracker_id = $1`, [trackerId]);
-    const alreadySubmitted = existingRes.rows.some((r) => cafesMatch(r.cafe, cafe));
+    const targetCanonical = canonicalCafeForm(cafe);
+    const alreadySubmitted = existingRes.rows.some((r) => canonicalCafeForm(r.cafe) === targetCanonical);
     if (alreadySubmitted) {
       return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
     }
