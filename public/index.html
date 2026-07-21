@@ -554,11 +554,13 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             var flagged = q.noCount > 0 ? '<span class="pill flag">' + q.noCount + ' No</span>' : '<span class="pill up">All Yes</span>';
             var negRows = q.noEntries.map(function (entry) {
               var rowId = 'neg-' + entry.submissionId + '-' + q.id;
-              return '<div style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--grey-200);padding:10px;margin-top:8px;flex-wrap:wrap;">' +
+              var locked = !!entry.actioned;
+              return '<div class="neg-row" data-row-id="' + rowId + '" data-locked="' + (locked ? '1' : '0') + '" style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--grey-200);padding:10px;margin-top:8px;flex-wrap:wrap;">' +
                 '<div style="min-width:120px;font-size:12px;font-weight:700;">' + esc(entry.cafe) + '</div>' +
-                '<textarea data-comment-id="' + rowId + '" placeholder="Comment / action taken…" style="flex:1;min-width:180px;min-height:38px;padding:7px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + esc(entry.comment) + '</textarea>' +
-                '<label style="display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;white-space:nowrap;"><input type="checkbox" data-actioned-id="' + rowId + '"' + (entry.actioned ? ' checked' : '') + '> Actioned</label>' +
-                '<button class="btn outline small" data-save-id="' + rowId + '" data-sub="' + entry.submissionId + '" data-item="' + q.id + '" data-cond="' + (isConditional ? '1' : '0') + '">Save</button>' +
+                '<textarea data-comment-id="' + rowId + '" placeholder="Comment / action taken…"' + (locked ? ' disabled' : '') + ' style="flex:1;min-width:180px;min-height:38px;padding:7px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;' + (locked ? 'background:var(--grey-100);color:var(--grey-700);' : '') + '">' + esc(entry.comment) + '</textarea>' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;white-space:nowrap;"><input type="checkbox" data-actioned-id="' + rowId + '"' + (locked ? ' checked disabled' : '') + '> Actioned</label>' +
+                '<button class="btn outline small" data-save-id="' + rowId + '" data-sub="' + entry.submissionId + '" data-item="' + q.id + '" data-cond="' + (isConditional ? '1' : '0') + '" style="display:' + (locked ? 'none' : 'inline-block') + ';">Save</button>' +
+                '<button class="btn outline small" data-edit-id="' + rowId + '" style="display:' + (locked ? 'inline-block' : 'none') + ';">Edit</button>' +
                 '<span class="hint" id="saved-' + rowId + '" style="width:100%;"></span>' +
               '</div>';
             }).join('');
@@ -592,6 +594,25 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
         summaryFooterHtml;
 
+      function setRowLocked(rowId, locked) {
+        var row = document.querySelector('.neg-row[data-row-id="' + rowId + '"]');
+        var textarea = document.querySelector('[data-comment-id="' + rowId + '"]');
+        var checkbox = document.querySelector('[data-actioned-id="' + rowId + '"]');
+        var saveBtn = document.querySelector('[data-save-id="' + rowId + '"]');
+        var editBtn = document.querySelector('[data-edit-id="' + rowId + '"]');
+        row.setAttribute('data-locked', locked ? '1' : '0');
+        textarea.disabled = locked;
+        textarea.style.background = locked ? 'var(--grey-100)' : '';
+        textarea.style.color = locked ? 'var(--grey-700)' : '';
+        checkbox.disabled = locked;
+        saveBtn.style.display = locked ? 'none' : 'inline-block';
+        editBtn.style.display = locked ? 'inline-block' : 'none';
+      }
+
+      document.getElementById('insightBody').querySelectorAll('[data-edit-id]').forEach(function (btn) {
+        btn.onclick = function () { setRowLocked(btn.getAttribute('data-edit-id'), false); };
+      });
+
       document.getElementById('insightBody').querySelectorAll('[data-save-id]').forEach(function (btn) {
         btn.onclick = function () {
           var rowId = btn.getAttribute('data-save-id');
@@ -605,6 +626,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
               var savedEl = document.getElementById('saved-' + rowId);
               savedEl.textContent = 'Saved ✓';
               setTimeout(function () { savedEl.textContent = ''; }, 2000);
+              if (actioned) setRowLocked(rowId, true);
             })
             .catch(function (e) { alert('Failed to save: ' + e.message); });
         };
@@ -1186,4 +1208,28 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
       api('/trackers/' + tracker.id + '/submissions', {
         method: 'POST',
-        body: { cafe: state.cafe, region: region, submittedBy: state.submittedBy, answers: answerArr, conditionalTriggered: state.conditionalTriggered, conditionalAnswers:
+        body: { cafe: state.cafe, region: region, submittedBy: state.submittedBy, answers: answerArr, conditionalTriggered: state.conditionalTriggered, conditionalAnswers: condArr, disclaimerConfirmed: state.disclaimerConfirmed },
+      }).then(function () {
+        document.getElementById('formWrap').innerHTML =
+          '<div class="form-card success-screen"><div class="tick">✓</div><h2>Launch Confirmed</h2>' +
+          '<p>Thank you — ' + esc(state.cafe) + '\'s submission has been recorded.</p></div>';
+      }).catch(function (e) {
+        btn.disabled = false; btn.textContent = 'Submit Launch Confirmation';
+        errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>';
+      });
+    };
+  }
+
+  function checkRow(field, labelHtml) {
+    return '<div class="check-row"><span class="label">' + labelHtml + '</span>' +
+      '<div class="toggle-group" data-field="' + field + '">' +
+        '<button type="button" class="toggle-btn yes" data-val="true">Yes</button>' +
+        '<button type="button" class="toggle-btn no" data-val="false">No</button>' +
+      '</div></div>';
+  }
+
+  route();
+})();
+</script>
+</body>
+</html>
