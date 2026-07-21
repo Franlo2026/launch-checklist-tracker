@@ -86,6 +86,37 @@ async function initDB() {
 
 const genId = (prefix) => `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 
+// ---- Legacy café name reconciliation ----
+// Submissions made before the masterfile-based café list existed used names like
+// "Salt River (XS)" or "Grandwest XS". The current list uses clean names ("Salt River",
+// "Grandwest"). This resolves old-style names to their current equivalent for matching
+// purposes only — it never rewrites stored data, just how names are compared.
+const LEGACY_CAFE_ALIASES = {
+  'n1 city kiosk': 'n1 city mall',
+  'aquarium (xs)': 'aquarium kiosk',
+  'aquarium xs': 'aquarium kiosk',
+};
+function stripFormatSuffix(name) {
+  let n = (name || '').trim();
+  n = n.replace(/\s*\(\s*(xs\s*kiosk|xs\s*petroleum\/?c-?store|petroleum\/?c-?store|c-?store|kiosk|xs)\s*\)\s*$/i, '');
+  n = n.replace(/\s+(xs\s*kiosk|xs\s*petroleum\/?c-?store|petroleum\/?c-?store|c-?store|kiosk|xs)\s*$/i, '');
+  return n.trim();
+}
+// Returns the set of keys a café name could match under. When a direct alias exists (a known
+// ambiguous legacy name), it's used exclusively — this avoids e.g. "Aquarium (XS)" matching the
+// unrelated "Aquarium" (All Day Café) just because both happen to strip down to the same word.
+function cafeCandidateKeys(name) {
+  const raw = (name || '').trim().toLowerCase();
+  if (LEGACY_CAFE_ALIASES[raw]) return new Set([LEGACY_CAFE_ALIASES[raw]]);
+  return new Set([raw, stripFormatSuffix(name).toLowerCase()]);
+}
+function cafesMatch(nameA, nameB) {
+  const keysA = cafeCandidateKeys(nameA);
+  const keysB = cafeCandidateKeys(nameB);
+  for (const k of keysA) if (keysB.has(k)) return true;
+  return false;
+}
+
 function setSessionCookie(res, admin) {
   const token = jwt.sign({ id: admin.id, username: admin.username, displayName: admin.display_name }, JWT_SECRET, { expiresIn: '30d' });
   res.cookie(COOKIE_NAME, token, {
@@ -400,7 +431,6 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const submittedCafes = Array.from(new Set(submissions.map((s) => s.cafe)));
     const exemptions = tracker.exemptions || [];
     const exemptCafeNames = exemptions.map((e) => e.cafe);
-    const norm = (s) => (s || '').trim().toLowerCase();
 
     // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
     const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
@@ -409,19 +439,18 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     let submittedInScope = submittedCafes;
     let unscopedSubmittedCafes = [];
     if (assigned) {
-      const assignedNorm = assigned.map((c) => norm(c.name || c));
-      const exemptNorm = exemptCafeNames.map(norm);
+      const assignedNames = assigned.map((c) => c.name || c);
 
-      // Only count a submission toward "Submitted" if its café is actually in the assigned list —
-      // otherwise a café submitted under a different/older name, or one outside this launch's
-      // format scope, would inflate "Submitted" without ever clearing "Not Yet Submitted".
-      submittedInScope = submittedCafes.filter((name) => assignedNorm.includes(norm(name)));
-      unscopedSubmittedCafes = submittedCafes.filter((name) => !assignedNorm.includes(norm(name)));
+      // Only count a submission toward "Submitted" if its café matches the assigned list —
+      // matching goes through cafesMatch so a legacy name (e.g. "Salt River (XS)") still
+      // correctly matches the current name ("Salt River") instead of inflating "Submitted"
+      // without ever clearing "Not Yet Submitted".
+      submittedInScope = submittedCafes.filter((name) => assignedNames.some((a) => cafesMatch(name, a)));
+      unscopedSubmittedCafes = submittedCafes.filter((name) => !assignedNames.some((a) => cafesMatch(name, a)));
 
-      const submittedNorm = submittedCafes.map(norm);
-      missingCafes = assigned
-        .map((c) => c.name || c)
-        .filter((name) => !submittedNorm.includes(norm(name)) && !exemptNorm.includes(norm(name)));
+      missingCafes = assignedNames.filter((name) =>
+        !submittedCafes.some((s) => cafesMatch(s, name)) && !exemptCafeNames.some((e) => cafesMatch(e, name))
+      );
     }
 
     function breakdown(items, getAnswers) {
@@ -528,12 +557,12 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
     if (!cafe || !submittedBy) return res.status(400).json({ error: 'Café name and submitted by are required' });
     if (!disclaimerConfirmed) return res.status(400).json({ error: 'You must confirm the launch disclaimer' });
 
-    // One submission per café per launch — friendly pre-check (the unique index below is the authoritative guard)
-    const dupe = await pool.query(
-      `SELECT id FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2))`,
-      [trackerId, cafe]
-    );
-    if (dupe.rows.length) {
+    // One submission per café per launch — checked in JS so legacy naming (e.g. "Salt River (XS)")
+    // is recognised as the same café as its current name. The DB unique index is the raw-string
+    // backstop for exact repeat submissions under identical wording.
+    const existingRes = await pool.query(`SELECT cafe FROM submissions WHERE tracker_id = $1`, [trackerId]);
+    const alreadySubmitted = existingRes.rows.some((r) => cafesMatch(r.cafe, cafe));
+    if (alreadySubmitted) {
       return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
     }
 
