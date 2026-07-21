@@ -199,10 +199,70 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   Object.keys(STORES_DATA).forEach(function (region) {
     STORES_DATA[region].forEach(function (s) { FLAT_STORES.push({ name: s.n, region: region, format: s.f }); });
   });
+  var ALL_CAFE_NAMES = FLAT_STORES.map(function (s) { return s.name; });
 
   function storesByFormat(formatValue) {
     if (formatValue === 'ALL') return FLAT_STORES.slice();
     return FLAT_STORES.filter(function (s) { return s.format === formatValue; });
+  }
+
+  // ---- Café name resolution (mirrors server-side logic) ----
+  // Lets any café name — however it was stored, old naming or new — be displayed with its
+  // correct current format tag by resolving it against the full masterfile list. Exact match
+  // always wins first, so two distinct current cafés (e.g. "Aquarium" vs "Aquarium Kiosk")
+  // never get confused with each other.
+  var LEGACY_CAFE_ALIASES = {
+    'n1 city kiosk': 'n1 city mall',
+    'aquarium (xs)': 'aquarium kiosk',
+    'aquarium xs': 'aquarium kiosk',
+  };
+  function stripFormatSuffix(name) {
+    var n = (name || '').trim();
+    n = n.replace(/\s*\(\s*(xs\s*kiosk|xs\s*petroleum\/?c-?store|petroleum\/?c-?store|c-?store|kiosk|xs)\s*\)\s*$/i, '');
+    n = n.replace(/\s+(xs\s*kiosk|xs\s*petroleum\/?c-?store|petroleum\/?c-?store|c-?store|kiosk|xs)\s*$/i, '');
+    return n.trim();
+  }
+  function resolveCafeMatch(targetName, candidates) {
+    var raw = (targetName || '').trim().toLowerCase();
+    var exact = candidates.find(function (c) { return (c || '').trim().toLowerCase() === raw; });
+    if (exact) return exact;
+    if (LEGACY_CAFE_ALIASES[raw]) {
+      var aliasTarget = LEGACY_CAFE_ALIASES[raw];
+      var aliased = candidates.find(function (c) {
+        var cRaw = (c || '').trim().toLowerCase();
+        return cRaw === aliasTarget || stripFormatSuffix(c).toLowerCase() === aliasTarget;
+      });
+      if (aliased) return aliased;
+    }
+    var stripped = stripFormatSuffix(targetName).toLowerCase();
+    if (stripped !== raw) {
+      var found = candidates.find(function (c) { return (c || '').trim().toLowerCase() === stripped; });
+      if (found) return found;
+    }
+    // Last resort: the old submitted name may have had NO suffix at all, while the current
+    // canonical name gained one later (e.g. "Hoedspruit" -> "Hoedspruit (C-Store)"). Only
+    // accept this if it's unambiguous — if two candidates strip to the same key, decline.
+    var symmetricMatches = candidates.filter(function (c) { return stripFormatSuffix(c).toLowerCase() === stripped; });
+    if (symmetricMatches.length === 1) return symmetricMatches[0];
+    return null;
+  }
+  // Returns the café's current, correctly-tagged display name — regardless of how the name is
+  // actually stored (old naming from before the format-tag update, current naming, etc). Falls
+  // back to the raw name if it can't be matched to anything in the masterfile.
+  function displayCafeName(rawName) {
+    var match = resolveCafeMatch(rawName, ALL_CAFE_NAMES);
+    return match || rawName;
+  }
+  // Re-tags every café name in an insights response so the display always reflects the current
+  // masterfile format, even for submissions/assignments made before the tagging convention existed.
+  function enrichInsightsCafeNames(d) {
+    d.missingCafes = (d.missingCafes || []).map(displayCafeName);
+    d.unscopedSubmittedCafes = (d.unscopedSubmittedCafes || []).map(displayCafeName);
+    (d.exemptCafes || []).forEach(function (e) { e.cafe = displayCafeName(e.cafe); });
+    (d.questionBreakdown || []).concat(d.conditionalBreakdown || []).forEach(function (q) {
+      (q.noEntries || []).forEach(function (entry) { entry.cafe = displayCafeName(entry.cafe); });
+    });
+    return d;
   }
 
   function defaultTemplate() {
@@ -507,6 +567,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function loadInsights(trackerId) {
     document.getElementById('insightBody').innerHTML = '<div class="empty-state">Loading…</div>';
     api('/trackers/' + trackerId + '/insights').then(function (d) {
+      d = enrichInsightsCafeNames(d);
       currentInsightsData = d;
       document.getElementById('pdfExportBtn').onclick = function () { exportInsightsPDF(d); };
 
@@ -643,168 +704,194 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function exportInsightsPDF(d) {
     if (!window.jspdf) { alert('PDF library still loading — please try again in a moment.'); return; }
     var doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
-    var y = 40;
+    var y = 44;
     var pageWidth = doc.internal.pageSize.getWidth();
     var pageHeight = doc.internal.pageSize.getHeight();
-    var marginLeft = 40;
-    var marginRight = 40;
+    var marginLeft = 44;
+    var marginRight = 44;
     var maxWidth = pageWidth - marginLeft - marginRight;
+    var BOTTOM_LIMIT = pageHeight - 55; // leaves room for the footer stamped in later
 
     var GOLD = [200, 174, 121];
+    var GOLD_LIGHT = [250, 246, 238];
     var BLACK = [26, 26, 26];
-    var GREY = [120, 120, 120];
+    var GREY = [130, 130, 130];
+    var GREY_LIGHT = [235, 235, 235];
     var GREEN = [74, 124, 74];
     var RED = [169, 68, 66];
 
+    function letterSpaced(text) { return text.toUpperCase().split('').join('\u200a '); }
+
     function newPageIfNeeded(neededHeight) {
-      if (y + neededHeight > pageHeight - 50) {
-        addFooter();
+      if (y + neededHeight > BOTTOM_LIMIT) {
         doc.addPage();
-        y = 40;
+        y = 44;
       }
-    }
-    function addFooter() {
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-      doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-      doc.text('Bootlegger Coffee Co. · Internal Use Only', marginLeft, pageHeight - 25);
-      doc.text('Generated via Claude', pageWidth - marginRight, pageHeight - 25, { align: 'right' });
     }
     function goldRule(yy) {
       doc.setDrawColor(GOLD[0], GOLD[1], GOLD[2]);
       doc.setLineWidth(1.5);
       doc.line(marginLeft, yy, pageWidth - marginRight, yy);
     }
-    function greyRule(yy) {
-      doc.setDrawColor(230, 230, 230);
-      doc.setLineWidth(0.75);
-      doc.line(marginLeft, yy, pageWidth - marginRight, yy);
-    }
     function sectionTitle(text) {
-      newPageIfNeeded(28);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+      newPageIfNeeded(30);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
       doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
-      doc.text(text.toUpperCase(), marginLeft, y);
-      y += 6;
-      greyRule(y);
-      y += 16;
+      doc.text(letterSpaced(text), marginLeft, y);
+      y += 7;
+      doc.setDrawColor(GREY_LIGHT[0], GREY_LIGHT[1], GREY_LIGHT[2]);
+      doc.setLineWidth(0.75);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+      y += 18;
     }
     function bodyLine(text, opts) {
       opts = opts || {};
-      doc.setFont('helvetica', opts.bold ? 'bold' : 'normal');
+      doc.setFont('helvetica', opts.italic ? 'italic' : (opts.bold ? 'bold' : 'normal'));
       doc.setFontSize(opts.size || 9.5);
       var color = opts.color || BLACK;
       doc.setTextColor(color[0], color[1], color[2]);
-      var lines = doc.splitTextToSize(text, maxWidth - (opts.indent || 0));
-      newPageIfNeeded(lines.length * 12 + 4);
-      doc.text(lines, marginLeft + (opts.indent || 0), y);
-      y += lines.length * 12 + 3;
+      var indent = opts.indent || 0;
+      var lines = doc.splitTextToSize(text, maxWidth - indent);
+      newPageIfNeeded(lines.length * 12.5 + 4);
+      doc.text(lines, marginLeft + indent, y);
+      y += lines.length * 12.5 + (opts.gap === undefined ? 4 : opts.gap);
     }
-    function statBox(x, w, value, label) {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
-      doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
-      doc.text(value, x, y);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
-      doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-      doc.text(label.toUpperCase(), x, y + 13);
+    // Draws a bordered "card" containing a row of stat blocks, sized to the content — mirrors
+    // the on-screen summary cards rather than plain inline text.
+    function statCard(stats) {
+      var cardHeight = 58;
+      newPageIfNeeded(cardHeight + 10);
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(GREY_LIGHT[0], GREY_LIGHT[1], GREY_LIGHT[2]);
+      doc.setLineWidth(0.75);
+      doc.roundedRect(marginLeft, y, maxWidth, cardHeight, 3, 3, 'S');
+      var colW = maxWidth / stats.length;
+      stats.forEach(function (stat, i) {
+        var x = marginLeft + colW * i + 16;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
+        doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
+        doc.text(String(stat.value), x, y + 30);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+        doc.setTextColor(GREY[0], GREY[1], GREY[2]);
+        var labelLines = doc.splitTextToSize(stat.label.toUpperCase(), colW - 24);
+        doc.text(labelLines, x, y + 43);
+      });
+      y += cardHeight + 18;
+    }
+    function statusTag(text, x, yy, color) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      var w = doc.getTextWidth(text) + 10;
+      doc.setFillColor(color[0], color[1], color[2]);
+      doc.roundedRect(x, yy - 8, w, 12, 2, 2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.text(text, x + 5, yy);
+      return w;
     }
 
     // ---- Header ----
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-    doc.text('BOOTLEGGER COFFEE CO.', marginLeft, y);
-    y += 4;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.text(letterSpaced('Bootlegger Coffee Co.'), marginLeft, y);
+    y += 22;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(19);
     doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
-    doc.text('Launch Tracker Report', marginLeft, y + 18);
-    y += 26;
+    doc.text('Launch Tracker Report', marginLeft, y);
+    y += 12;
     goldRule(y);
-    y += 20;
+    y += 22;
 
     doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text(d.tracker.name, marginLeft, y);
-    y += 16;
+    doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
+    var titleLines = doc.splitTextToSize(d.tracker.name, maxWidth);
+    doc.text(titleLines, marginLeft, y);
+    y += titleLines.length * 15;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.setTextColor(GREY[0], GREY[1], GREY[2]);
     doc.text('Generated ' + new Date().toLocaleString('en-ZA'), marginLeft, y);
-    y += 24;
+    y += 26;
 
-    // ---- Summary stats (mirrors the on-screen tracker detail stats) ----
+    // ---- Summary ----
     sectionTitle('Summary');
-    var colW = maxWidth / 4;
-    statBox(marginLeft, colW, d.totalAssigned === null ? '—' : String(d.totalAssigned), 'Assigned Cafés');
-    statBox(marginLeft + colW, colW, String(d.totalSubmitted), 'Submitted');
-    statBox(marginLeft + colW * 2, colW, String(d.totalExempted), 'Exempted');
-    statBox(marginLeft + colW * 3, colW, d.totalMissing === null ? '—' : String(d.totalMissing), 'Not Yet Submitted');
-    y += 30;
+    statCard([
+      { value: d.totalAssigned === null ? '—' : d.totalAssigned, label: 'Assigned Cafés' },
+      { value: d.totalSubmitted, label: 'Submitted' },
+      { value: d.totalExempted, label: 'Exempted' },
+      { value: d.totalMissing === null ? '—' : d.totalMissing, label: 'Not Yet Submitted' },
+    ]);
 
-    // ---- Launch Summary (mirrors the on-screen Launch Summary card) ----
+    // ---- Launch Summary ----
     sectionTitle('Launch Summary');
     var s = d.summary || {};
-    var colW5 = maxWidth / 5;
-    statBox(marginLeft, colW5, s.submissionRate === null ? '—' : s.submissionRate + '%', 'Submitted vs Assigned');
-    statBox(marginLeft + colW5, colW5, String(s.totalFlaggedInputs), 'Flagged Inputs');
-    statBox(marginLeft + colW5 * 2, colW5, String(s.actionedFlaggedInputs), 'Actioned');
-    statBox(marginLeft + colW5 * 3, colW5, String(s.pendingFlaggedInputs), 'Pending Action');
-    statBox(marginLeft + colW5 * 4, colW5, s.launchSuccessRate === null ? '—' : s.launchSuccessRate + '%', 'Launch Success Rate');
-    y += 20;
-    bodyLine('Launch Success Rate = % of submissions with zero flagged (No) answers.', { size: 8, color: GREY });
-    y += 12;
+    statCard([
+      { value: (s.submissionRate === null ? '—' : s.submissionRate + '%'), label: 'Submitted vs Assigned' },
+      { value: s.totalFlaggedInputs, label: 'Flagged Inputs' },
+      { value: s.actionedFlaggedInputs, label: 'Actioned' },
+      { value: s.pendingFlaggedInputs, label: 'Pending Action' },
+      { value: (s.launchSuccessRate === null ? '—' : s.launchSuccessRate + '%'), label: 'Launch Success Rate' },
+    ]);
+    bodyLine('Launch Success Rate = % of submissions with zero flagged (No) answers.', { size: 8, color: GREY, gap: 14 });
 
     if (d.totalMissing !== null) {
       sectionTitle('Not Yet Submitted (' + d.missingCafes.length + ')');
-      bodyLine(d.missingCafes.length ? d.missingCafes.join('  ·  ') : 'All assigned cafés have submitted.');
-      y += 8;
+      bodyLine(d.missingCafes.length ? d.missingCafes.join('  ·  ') : 'All assigned cafés have submitted.', { gap: 16 });
     }
 
     sectionTitle('Exempted Cafés (' + d.exemptCafes.length + ')');
-    bodyLine(d.exemptCafes.length ? d.exemptCafes.map(function (e) { return e.cafe + ' (' + e.reason + ')'; }).join('  ·  ') : 'None.');
-    y += 8;
+    bodyLine(d.exemptCafes.length ? d.exemptCafes.map(function (e) { return e.cafe + ' (' + e.reason + ')'; }).join('  ·  ') : 'None.', { gap: 16 });
 
     if (d.unscopedSubmittedCafes && d.unscopedSubmittedCafes.length) {
       sectionTitle('Submissions Outside Current Café List (' + d.unscopedSubmittedCafes.length + ')');
-      bodyLine(d.unscopedSubmittedCafes.join('  ·  '), { color: RED });
-      y += 8;
+      bodyLine(d.unscopedSubmittedCafes.join('  ·  '), { color: RED, gap: 16 });
     }
 
     function pdfQuestionSection(title, items) {
       if (!items.length) return;
       sectionTitle(title);
-      items.forEach(function (q) {
-        newPageIfNeeded(16);
-        bodyLine(q.label + '   (' + q.yesCount + ' Yes / ' + q.noCount + ' No)', { bold: true, size: 10 });
+      items.forEach(function (q, qi) {
+        newPageIfNeeded(18);
+        bodyLine(q.label + '   (' + q.yesCount + ' Yes / ' + q.noCount + ' No)', { bold: true, size: 10, gap: 8 });
+
         q.noEntries.forEach(function (entry) {
-          var tag = entry.actioned ? '[Actioned]' : '[Pending]';
+          var tag = entry.actioned ? 'ACTIONED' : 'PENDING';
           var tagColor = entry.actioned ? GREEN : RED;
-          newPageIfNeeded(13);
-          doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+          var rowHeight = entry.comment ? 26 : 14;
+          newPageIfNeeded(rowHeight);
+
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
           doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
-          var prefix = '   •  ' + entry.cafe + '  ';
-          doc.text(prefix, marginLeft, y);
-          var prefixWidth = doc.getTextWidth(prefix);
-          doc.setFont('helvetica', 'bold');
-          doc.setTextColor(tagColor[0], tagColor[1], tagColor[2]);
-          doc.text(tag, marginLeft + prefixWidth, y);
+          doc.text(entry.cafe, marginLeft + 12, y);
+          statusTag(tag, pageWidth - marginRight - (tag.length * 6 + 16), y, tagColor);
+          y += 12;
+
           if (entry.comment) {
-            var tagWidth = doc.getTextWidth(tag + '  ');
-            doc.setFont('helvetica', 'italic');
+            doc.setFont('helvetica', 'italic'); doc.setFontSize(8.5);
             doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-            var commentLines = doc.splitTextToSize('— ' + entry.comment, maxWidth - prefixWidth - tagWidth - 6);
-            doc.text(commentLines[0], marginLeft + prefixWidth + tagWidth + 6, y);
-            if (commentLines.length > 1) {
-              y += 12;
-              doc.text(commentLines.slice(1), marginLeft + 20, y);
-              y += (commentLines.length - 1) * 12;
-            }
+            var commentLines = doc.splitTextToSize(entry.comment, maxWidth - 20);
+            newPageIfNeeded(commentLines.length * 11);
+            doc.text(commentLines, marginLeft + 20, y);
+            y += commentLines.length * 11;
           }
-          y += 13;
+          y += 4;
         });
-        y += 6;
+        y += (qi < items.length - 1 ? 6 : 14);
       });
     }
     pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
     pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
 
-    addFooter();
+    // Stamp the footer on every page in one final pass — avoids any risk of footer text
+    // overlapping content that was still being written near the bottom of a page.
+    var totalPages = doc.internal.getNumberOfPages();
+    for (var p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setDrawColor(GREY_LIGHT[0], GREY_LIGHT[1], GREY_LIGHT[2]);
+      doc.setLineWidth(0.5);
+      doc.line(marginLeft, pageHeight - 38, pageWidth - marginRight, pageHeight - 38);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+      doc.setTextColor(GREY[0], GREY[1], GREY[2]);
+      doc.text('Bootlegger Coffee Co. · Internal Use Only', marginLeft, pageHeight - 25);
+      doc.text('Page ' + p + ' of ' + totalPages, pageWidth - marginRight, pageHeight - 25, { align: 'right' });
+    }
 
     var safeName = (d.tracker.name || 'Launch').replace(/[\\/:*?"<>|]/g, '-').trim();
     doc.save('Launch Tracker - ' + safeName + '.pdf');
