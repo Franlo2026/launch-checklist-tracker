@@ -489,7 +489,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     }
 
     function breakdown(items, getAnswers) {
-      return items.map((item) => {
+      return items.filter((item) => item.input_type !== 'text').map((item) => {
         const relevant = submissions.filter((s) => getAnswers(s) !== null);
         let yesCount = 0, noCount = 0;
         const noEntries = [];
@@ -512,9 +512,28 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       });
     }
 
+    // Comment-box items don't have a Yes/No answer — instead of a flag breakdown, collect the
+    // free-text response each café gave, for display in its own section.
+    function textResponses(items, getAnswers) {
+      return items.filter((item) => item.input_type === 'text').map((item) => {
+        const responses = [];
+        submissions.forEach((s) => {
+          const ans = getAnswers(s);
+          if (ans === null) return;
+          const match = (ans || []).find((a) => a.id === item.id);
+          if (match && match.text) responses.push({ cafe: s.cafe, text: match.text });
+        });
+        return { id: item.id, label: item.label, responses };
+      });
+    }
+
     const questionBreakdown = breakdown(tracker.checklist_items, (s) => s.answers);
     const conditionalBreakdown = tracker.conditional && tracker.conditional.enabled
       ? breakdown(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
+      : [];
+    const textResponsesMain = textResponses(tracker.checklist_items, (s) => s.answers);
+    const textResponsesConditional = tracker.conditional && tracker.conditional.enabled
+      ? textResponses(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
       : [];
 
     // ---- Summary stats ----
@@ -549,6 +568,8 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       unscopedSubmittedCafes, // no longer shown as its own report section — surfaced instead in the template editor
       questionBreakdown,
       conditionalBreakdown,
+      textResponses: textResponsesMain,
+      textResponsesConditional,
       summary: {
         submissionRate,          // % of assigned cafés that have submitted — this IS the "Launch Success Rate"
         totalFlaggedInputs,      // total "No" answers across all questions
