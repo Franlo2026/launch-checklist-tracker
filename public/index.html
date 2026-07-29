@@ -261,6 +261,9 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     (d.questionBreakdown || []).concat(d.conditionalBreakdown || []).forEach(function (q) {
       (q.noEntries || []).forEach(function (entry) { entry.cafe = displayCafeName(entry.cafe); });
     });
+    (d.textResponses || []).concat(d.textResponsesConditional || []).forEach(function (q) {
+      (q.responses || []).forEach(function (r) { r.cafe = displayCafeName(r.cafe); });
+    });
     return d;
   }
 
@@ -624,6 +627,20 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '</div>';
       }
 
+      function textResponsesBlock(title, items) {
+        if (!items || !items.length) return '';
+        var withResponses = items.filter(function (q) { return q.responses.length; });
+        if (!withResponses.length) return '';
+        return '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">' + esc(title) + '</div>' +
+          withResponses.map(function (q) {
+            var rows = q.responses.map(function (r) {
+              return '<div style="border-bottom:1px solid var(--grey-200);padding:8px 0;"><span style="font-weight:700;font-size:11px;">' + esc(r.cafe) + '</span><div style="font-size:12px;color:var(--grey-700);margin-top:3px;">' + esc(r.text) + '</div></div>';
+            }).join('');
+            return '<div style="margin-bottom:14px;"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">' + esc(q.label) + '</div>' + rows + '</div>';
+          }).join('') +
+        '</div>';
+      }
+
       var s = d.summary || {};
       var summaryFooterHtml = '<div class="card" style="margin-bottom:20px;">' +
         '<div class="editor-section-title" style="margin-top:0;">Launch Summary</div>' +
@@ -645,6 +662,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       document.getElementById('insightBody').innerHTML = summaryHtml + missingHtml + exemptHtml +
         questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
         questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
+        textResponsesBlock('Checklist Comment Responses', d.textResponses) +
+        textResponsesBlock('Conditional Comment Responses', d.textResponsesConditional) +
         summaryFooterHtml;
 
       function setRowLocked(rowId, locked) {
@@ -864,6 +883,33 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     }
     pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
     pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
+
+    function pdfTextResponseSection(title, items) {
+      if (!items || !items.length) return;
+      var withResponses = items.filter(function (q) { return q.responses.length; });
+      if (!withResponses.length) return;
+      sectionTitle(title);
+      withResponses.forEach(function (q, qi) {
+        newPageIfNeeded(16);
+        bodyLine(q.label, { bold: true, size: 10, gap: 6 });
+        q.responses.forEach(function (r) {
+          newPageIfNeeded(14);
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+          doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
+          doc.text(r.cafe, marginLeft + 12, y);
+          y += 11;
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+          doc.setTextColor(GREY[0], GREY[1], GREY[2]);
+          var lines = doc.splitTextToSize(r.text, maxWidth - 20);
+          newPageIfNeeded(lines.length * 11);
+          doc.text(lines, marginLeft + 20, y);
+          y += lines.length * 11 + 4;
+        });
+        y += (qi < withResponses.length - 1 ? 6 : 14);
+      });
+    }
+    pdfTextResponseSection('Checklist Comment Responses', d.textResponses);
+    pdfTextResponseSection('Conditional Comment Responses', d.textResponsesConditional);
 
     // Stamp the footer on every page in one final pass — avoids any risk of footer text
     // overlapping content that was still being written near the bottom of a page.
@@ -1152,7 +1198,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         if (!it.input_type) it.input_type = 'yesno';
         return '<div class="item-row" data-idx="' + idx + '">' +
           '<input type="text" value="' + esc(it.label) + '" data-field="label">' +
-          '<label class="photo-toggle"><input type="checkbox" data-field="checkbox-only"' + (it.input_type === 'checkbox' ? ' checked' : '') + '> Tick-box only</label>' +
+          '<select data-field="input-type" style="font-size:10px;text-transform:uppercase;border:1px solid var(--grey-300);padding:5px 6px;font-family:var(--font);">' +
+            '<option value="yesno"' + (it.input_type === 'yesno' ? ' selected' : '') + '>Yes / No</option>' +
+            '<option value="checkbox"' + (it.input_type === 'checkbox' ? ' selected' : '') + '>Tick-box only</option>' +
+            '<option value="text"' + (it.input_type === 'text' ? ' selected' : '') + '>Comment Box</option>' +
+          '</select>' +
           '<label class="photo-toggle"><input type="checkbox" data-field="photo"' + (it.requires_photo ? ' checked' : '') + '> Add Picture</label>' +
           '<span class="remove-item" data-remove="1">✕</span>' +
         '</div>';
@@ -1161,7 +1211,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         var idx = parseInt(row.getAttribute('data-idx'), 10);
         row.querySelector('input[data-field=label]').addEventListener('input', function (e) { items[idx].label = e.target.value; });
         row.querySelector('input[data-field=photo]').addEventListener('change', function (e) { items[idx].requires_photo = e.target.checked; });
-        row.querySelector('input[data-field="checkbox-only"]').addEventListener('change', function (e) { items[idx].input_type = e.target.checked ? 'checkbox' : 'yesno'; });
+        row.querySelector('select[data-field="input-type"]').addEventListener('change', function (e) { items[idx].input_type = e.target.value; });
         row.querySelector('.remove-item').addEventListener('click', function () { items.splice(idx, 1); renderItemRows(containerId, items); });
       });
     }
@@ -1239,8 +1289,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     var answers = {};
     var condAnswers = {};
 
-    tracker.checklist_items.forEach(function (it) { answers[it.id] = { value: null, photo: null }; });
-    (tracker.conditional.items || []).forEach(function (it) { condAnswers[it.id] = { value: null, photo: null }; });
+    tracker.checklist_items.forEach(function (it) { answers[it.id] = { value: null, photo: null, text: '' }; });
+    (tracker.conditional.items || []).forEach(function (it) { condAnswers[it.id] = { value: null, photo: null, text: '' }; });
 
     // If this launch was assigned to a specific format/café selection, only show those cafés.
     // Trackers created before this feature (or left as "All Formats") fall back to the full masterfile list.
@@ -1274,9 +1324,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
           '</div>'
         : '';
-      var questionBlock = it.input_type === 'checkbox'
-        ? '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>'
-        : checkRow(it.id, esc(it.label));
+      var questionBlock;
+      if (it.input_type === 'checkbox') {
+        questionBlock = '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>';
+      } else if (it.input_type === 'text') {
+        questionBlock = '<div class="field" style="margin-bottom:10px;"><label>' + esc(it.label) + '</label>' +
+          '<textarea data-text-field="' + it.id + '" placeholder="Type your response…" style="width:100%;min-height:70px;padding:10px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></textarea></div>';
+      } else {
+        questionBlock = checkRow(it.id, esc(it.label));
+      }
       return questionBlock + photoBlock;
     }
 
@@ -1338,6 +1394,16 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       });
     });
 
+    wrap.querySelectorAll('[data-text-field]').forEach(function (ta) {
+      var field = ta.getAttribute('data-text-field');
+      ta.addEventListener('input', function () {
+        var text = ta.value.trim();
+        var val = text ? true : null; // empty = not yet answered, blocks submission
+        if (answers[field]) { answers[field].value = val; answers[field].text = text; }
+        else if (condAnswers[field]) { condAnswers[field].value = val; condAnswers[field].text = text; }
+      });
+    });
+
     tracker.checklist_items.concat(tracker.conditional.items || []).forEach(function (it) {
       if (!it.requires_photo) return;
       var input = document.getElementById('photoInput-' + it.id);
@@ -1384,8 +1450,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       var btn = document.getElementById('submitBtn');
       btn.disabled = true; btn.textContent = 'Submitting…';
 
-      var answerArr = tracker.checklist_items.map(function (it) { return { id: it.id, label: it.label, value: answers[it.id].value, photo: answers[it.id].photo }; });
-      var condArr = state.conditionalTriggered ? (tracker.conditional.items || []).map(function (it) { return { id: it.id, label: it.label, value: condAnswers[it.id].value, photo: condAnswers[it.id].photo }; }) : null;
+      var answerArr = tracker.checklist_items.map(function (it) { return { id: it.id, label: it.label, value: answers[it.id].value, photo: answers[it.id].photo, text: answers[it.id].text || '' }; });
+      var condArr = state.conditionalTriggered ? (tracker.conditional.items || []).map(function (it) { return { id: it.id, label: it.label, value: condAnswers[it.id].value, photo: condAnswers[it.id].photo, text: condAnswers[it.id].text || '' }; }) : null;
 
       api('/trackers/' + tracker.id + '/submissions', {
         method: 'POST',
