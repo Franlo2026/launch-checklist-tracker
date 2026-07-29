@@ -505,6 +505,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
               cafe: s.cafe,
               comment: match.comment || '',
               actioned: !!match.actioned,
+              photo: match.photo || null,
             });
           }
         });
@@ -521,7 +522,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
           const ans = getAnswers(s);
           if (ans === null) return;
           const match = (ans || []).find((a) => a.id === item.id);
-          if (match && match.text) responses.push({ cafe: s.cafe, text: match.text });
+          if (match && match.text) responses.push({ cafe: s.cafe, text: match.text, photo: match.photo || null });
         });
         return { id: item.id, label: item.label, responses };
       });
@@ -535,6 +536,27 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const textResponsesConditional = tracker.conditional && tracker.conditional.enabled
       ? textResponses(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
       : [];
+
+    // Every submitted photo, regardless of which question or whether the answer was Yes/No —
+    // shown as its own gallery so nothing submitted gets missed.
+    function collectPhotos(items, getAnswers) {
+      const out = [];
+      items.forEach((item) => {
+        submissions.forEach((s) => {
+          const ans = getAnswers(s);
+          if (ans === null) return;
+          const match = (ans || []).find((a) => a.id === item.id);
+          if (match && match.photo) {
+            out.push({ cafe: s.cafe, questionLabel: item.label, photo: match.photo, value: match.value, submittedAt: s.submitted_at });
+          }
+        });
+      });
+      return out;
+    }
+    const photoSubmissions = collectPhotos(tracker.checklist_items, (s) => s.answers)
+      .concat(tracker.conditional && tracker.conditional.enabled
+        ? collectPhotos(tracker.conditional.items, (s) => (s.conditional_triggered ? s.conditional_answers : null))
+        : []);
 
     // ---- Summary stats ----
     // "Submitted vs Assigned" — how much of the assigned café list has actually submitted.
@@ -570,6 +592,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
       conditionalBreakdown,
       textResponses: textResponsesMain,
       textResponsesConditional,
+      photoSubmissions,
       summary: {
         submissionRate,          // % of assigned cafés that have submitted — this IS the "Launch Success Rate"
         totalFlaggedInputs,      // total "No" answers across all questions
