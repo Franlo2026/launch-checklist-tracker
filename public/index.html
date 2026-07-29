@@ -115,9 +115,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 .hybrid-section { border-top: 2px solid var(--gold); margin-top: 22px; padding-top: 18px; }
 .hybrid-section .section-tag { font-size: 10px; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
 
-.disclaimer-box { background: var(--grey-100); border: 1px solid var(--grey-200); padding: 14px; margin: 20px 0; font-size: 11px; color: var(--grey-700); line-height: 1.5; }
-.disclaimer-check { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; }
-.disclaimer-check input { margin-top: 3px; width: 16px; height: 16px; }
+.disclaimer-check { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; }
+.disclaimer-check input { margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0; }
 .disclaimer-check span { font-size: 12px; font-weight: 600; color: var(--black); }
 
 .submit-btn { width: 100%; padding: 15px; font-size: 12px; }
@@ -1304,10 +1303,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             tracker.conditional.items.map(itemBlockHtml).join('') +
           '</div></div>' : '') +
 
-        '<div class="disclaimer-box">' +
-          'By submitting the above, I confirm that my café has launched successfully.' +
-          '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>I confirm the above checklist is accurate and my café has launched successfully.</span></div>' +
-        '</div>' +
+        '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>I hereby confirm that my submission is accurate and in line with the requirements stipulated above.</span></div>' +
 
         '<div id="formError"></div>' +
         '<button class="btn gold submit-btn" id="submitBtn">Submit Launch Confirmation</button>' +
