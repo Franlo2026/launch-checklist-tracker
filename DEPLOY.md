@@ -3,23 +3,30 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
-- **Mix-and-match sections**: the template editor now offers every Standard, Pre-Launch, and
+- **Redesigned submission page for sectioned launches**: instead of a hub with separate pages
+  per section, everything now lives on one page. Each section carries a dropdown ("Skip for
+  now" / "Complete this section", or a count of new entries for repeatable ones like Training
+  Proof) instead of its own submit button — picking a value reveals that section's fields inline.
+- **One declaration, one submit**: per-section declarations and submit buttons are gone. There's
+  a single declaration checkbox and a single Submit button at the bottom of the page, covering
+  whatever sections/entries were filled in.
+- **Partial submission is expected, not blocked**: a café can submit with only some sections
+  filled in — nothing requires every section to be complete in one sitting, matching how the
+  process actually unfolds (they come back to the same link as things progress). The only
+  requirement is that at least one section has been filled in, and that whatever's chosen is
+  fully answered (including its photo/date where required) before that submit goes through.
+- **Photo fields are required, not optional**: the "(optional)" wording next to Photo has been
+  removed everywhere, and photo capture is now enforced by validation on both the sectioned and
+  standard submission pages wherever a checklist item is marked to require one.
+- **Mix-and-match sections**: the template editor offers every Standard, Pre-Launch, and
   Post-Launch section as an individual "+ Add" button, grouped by category, so you can build a
-  template from whichever sections actually apply — e.g. a launch that needs Training Proof and
-  Stock Receipt but not Collaterals, plus a Post-Launch Product On Display check, all in one
-  template. Each add is its own editable copy.
-- **Archived tab**: the dashboard now has Active / Archived tabs (with live counts) instead of
-  mixing everything into one list — archived trackers are one click away instead of scrolled past.
-- **Multi-submission sections**: a launch tracker can now be built from independently-submitted
-  **sections** instead of one flat checklist. Cafés work through a single link, submitting each
-  section separately (and, for repeatable sections, more than once — e.g. 3-4 Training Proof
-  entries). Everything rolls up together in Insights and the PDF.
+  template from whichever sections actually apply.
+- **Archived tab**: the dashboard has Active / Archived tabs (with live counts).
 - **Standard scenario** (the default, no sections added) is completely unchanged — existing
   trackers keep behaving exactly as before, one flat submission per café.
-- **Branding**: PDF header now shows the Bootlegger wordmark only (no "Coffee Co." wording), the
-  dashboard/detail/PDF footers no longer repeat the company name, and the final confirmation
-  tick-box now reads: *"I hereby declare that this task/launch/confirmation is 100% accurate and
-  as per the requirements set out."*
+- **Branding**: PDF header shows the Bootlegger wordmark only, footers no longer repeat the
+  company name, and the final confirmation tick-box reads: *"I hereby declare that this
+  task/launch/confirmation is 100% accurate and as per the requirements set out."*
 
 This is a **database-safe update** — it adds new columns (`scenario`, `sections` on trackers;
 `section_id`, `section_label`, `occurrence` on submissions) without touching existing data. The
@@ -32,8 +39,14 @@ In **+ New Launch Tracker**, under "Add Sections" you'll see three groups — St
 and Post-Launch — each listing its available sections as individual buttons. Click any that apply
 (you're not limited to one category) to add an editable copy to the template; rename, add/remove
 items, or mark a section **Repeatable** with a Min/Max submission count (e.g. Training Proof: min
-3, max 4) as needed before saving. Branches see a progress hub on the submission link showing
-what's outstanding for their café, and can return to the same link to add more.
+3, max 4) as needed before saving.
+
+### What a café sees on a sectioned link
+After picking their café, everything is on one page: each section shows a dropdown to either skip
+it for now or fill it in (a count of entries for repeatable sections). Sections already fully
+submitted show a "✓ Complete" badge instead of a dropdown. At the bottom there's one declaration
+and one Submit button — clicking it saves whatever sections/entries were filled in, even if others
+were left for a later visit.
 
 ## 1. Push to GitHub
 1. Create a new **private** repo, e.g. `Franlo2026/launch-checklist-tracker`
