@@ -290,6 +290,56 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   var idCounter = 0;
   function genId(prefix) { idCounter += 1; return prefix + '_' + idCounter + '_' + Date.now().toString(36); }
 
+  // ---- Scenario presets ----
+  // Loaded into an empty sections list the moment a scenario is chosen in the editor — the admin
+  // can still add/remove/edit anything afterwards. Picking "Standard" keeps the classic flat
+  // checklist behaviour untouched (sections stays empty, exactly like every tracker before this).
+  function newSection(label, type, repeatable, items, maxOccurrences, minOccurrences) {
+    return {
+      id: genId('sec'), label: label, type: type,
+      repeatable: !!repeatable,
+      minOccurrences: minOccurrences || 1,
+      maxOccurrences: repeatable ? (maxOccurrences || 4) : 1,
+      items: items,
+    };
+  }
+  function newItem(label, inputType, requiresPhoto, requiresDate) {
+    return { id: genId('it'), label: label, input_type: inputType || 'yesno', requires_photo: !!requiresPhoto, requires_date: !!requiresDate };
+  }
+  var SECTION_PRESETS = {
+    pre_launch: function () {
+      return [
+        newSection('Training Proof', 'training_proof', true, [
+          newItem('Staff member trained on new launch', 'yesno', true, true),
+        ], 4, 3),
+        newSection('Stock Receipt Confirmation', 'stock_receipt', false, [
+          newItem('Stock received in full ahead of launch', 'yesno', true),
+          newItem('Any shortages or damages (details)', 'text'),
+        ]),
+        newSection('Collaterals Receipt', 'collaterals_receipt', false, [
+          newItem('Launch collateral received', 'yesno', true),
+        ]),
+        newSection('Point of Sale Updates', 'pos_update', false, [
+          newItem('GAAP POS updated with new item(s)/pricing', 'yesno'),
+        ]),
+        newSection('Online Training Completion', 'online_training', false, [
+          newItem('All required staff completed online training', 'yesno'),
+        ]),
+      ];
+    },
+    post_launch: function () {
+      return [
+        newSection('Product On Display', 'display_evidence', false, [
+          newItem('Product visibly on display', 'yesno', true),
+        ]),
+        newSection('Product Leaving Kitchen', 'kitchen_evidence', false, [
+          newItem('Product prepared and leaving the kitchen', 'yesno', true),
+        ]),
+      ];
+    },
+  };
+  var SCENARIO_LABELS = { standard: 'Standard', pre_launch: 'Pre-Launch', post_launch: 'Post-Launch' };
+
   var app = document.getElementById('app');
 
   function esc(s) {
@@ -413,7 +463,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '</div>' +
         '<div id="trackerList"><div class="empty-state">Loading…</div></div>' +
       '</div>' +
-      '<div class="footer"><div>Bootlegger Coffee Co. · Internal Use Only</div><div>Generated via Claude</div></div>';
+      '<div class="footer"><div>Internal Use Only</div></div>';
 
     api('/auth/status').then(function (s) { document.getElementById('whoUser').textContent = s.username || ''; });
     document.getElementById('insightsLink').onclick = function () { renderInsightsPicker(); };
@@ -676,18 +726,44 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           statBlock(s.launchActionRate === null ? '—' : s.launchActionRate + '%', 'Launch Action Rate') +
         '</div>' +
         '<div class="hint" style="margin-top:10px;">' +
-          'Launch Success Rate = % of submissions received vs allocated cafés. ' +
+          (d.sections
+            ? 'Launch Success Rate = % of assigned cafés that have completed every section. '
+            : 'Launch Success Rate = % of submissions received vs allocated cafés. ') +
           'Launch Accuracy Rate = % of flagged inputs vs submissions. ' +
           'Launch Action Rate = % of flagged inputs actioned.' +
         '</div>' +
       '</div>';
 
-      document.getElementById('insightBody').innerHTML = summaryHtml + summaryFooterHtml + missingHtml + exemptHtml +
+      // ---- Sectioned trackers (Pre-/Post-Launch): a progress card per section, then the same
+      // Yes/No breakdown + comment + photo rendering used for flat trackers, run once per section.
+      var sectionsHtml = '';
+      var sectionPhotos = [];
+      if (d.sections && d.sections.length) {
+        sectionsHtml = '<div class="card" style="margin-bottom:20px;"><div class="editor-section-title" style="margin-top:0;">Section Progress</div>' +
+          d.sections.map(function (sec) {
+            return '<div class="answer-row"><span class="a-label">' + esc(sec.label) + (sec.repeatable ? ' <span class="hint" style="display:inline;">(repeatable, min ' + sec.minOccurrences + ')</span>' : '') + '</span>' +
+              '<span style="font-size:11px;color:var(--grey-500);">' + sec.cafesStarted + ' café(s) started · ' + sec.totalOccurrenceSubmissions + ' submission(s) total</span></div>';
+          }).join('') +
+        '</div>';
+
+        sectionsHtml += d.sections.map(function (sec) {
+          (sec.itemBreakdown || []).forEach(function (item) {
+            (item.noEntries || []).forEach(function (e) { if (e.photo) sectionPhotos.push({ cafe: e.cafe, questionLabel: sec.label + ' — ' + item.label, photo: e.photo }); });
+          });
+          (sec.textResponses || []).forEach(function (item) {
+            (item.responses || []).forEach(function (r) { if (r.photo) sectionPhotos.push({ cafe: r.cafe, questionLabel: sec.label + ' — ' + item.label, photo: r.photo }); });
+          });
+          return questionBlock(sec.label + ' — Breakdown', sec.itemBreakdown || [], false) +
+            textResponsesBlock(sec.label + ' — Comments', sec.textResponses || []);
+        }).join('');
+      }
+
+      document.getElementById('insightBody').innerHTML = summaryHtml + summaryFooterHtml + missingHtml + exemptHtml + sectionsHtml +
         questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
         questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
         textResponsesBlock('Checklist Comment Responses', d.textResponses) +
         textResponsesBlock('Conditional Comment Responses', d.textResponsesConditional) +
-        photoGalleryBlock(d.photoSubmissions);
+        photoGalleryBlock((d.photoSubmissions || []).concat(sectionPhotos));
 
       document.getElementById('insightBody').querySelectorAll('[id^="photo-gal-"]').forEach(function (img) {
         img.onclick = function () { openLightbox(img.src); };
@@ -834,7 +910,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     // ---- Header ----
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-    doc.text('BOOTLEGGER COFFEE CO.', marginLeft, y);
+    doc.text('BOOTLEGGER', marginLeft, y);
     y += 22;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(19);
     doc.setTextColor(BLACK[0], BLACK[1], BLACK[2]);
@@ -915,6 +991,17 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         y += (qi < items.length - 1 ? 6 : 14);
       });
     }
+    if (d.sections && d.sections.length) {
+      sectionTitle('Section Progress');
+      d.sections.forEach(function (sec) {
+        bodyLine(sec.label + (sec.repeatable ? ' (repeatable, min ' + sec.minOccurrences + ')' : '') + '   —   ' + sec.cafesStarted + ' café(s) started, ' + sec.totalOccurrenceSubmissions + ' submission(s) total', { size: 9, gap: 6 });
+      });
+      y += 8;
+      d.sections.forEach(function (sec) {
+        pdfQuestionSection(sec.label + ' — Breakdown', sec.itemBreakdown || []);
+        pdfTextResponseSection(sec.label + ' — Comments', sec.textResponses || []);
+      });
+    }
     pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
     pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
 
@@ -982,7 +1069,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       doc.line(marginLeft, pageHeight - 38, pageWidth - marginRight, pageHeight - 38);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
       doc.setTextColor(GREY[0], GREY[1], GREY[2]);
-      doc.text('Bootlegger Coffee Co. · Internal Use Only', marginLeft, pageHeight - 25);
+      doc.text('Internal Use Only', marginLeft, pageHeight - 25);
       doc.text('Page ' + p + ' of ' + totalPages, pageWidth - marginRight, pageHeight - 25, { align: 'right' });
     }
 
@@ -998,7 +1085,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '<a class="back-link" id="backBtn">&larr; All Launch Trackers</a>' +
         '<div id="trackerDetail" style="margin-top:16px;"><div class="empty-state">Loading…</div></div>' +
       '</div>' +
-      '<div class="footer"><div>Bootlegger Coffee Co. · Internal Use Only</div><div>Generated via Claude</div></div>';
+      '<div class="footer"><div>Internal Use Only</div></div>';
     document.getElementById('backBtn').onclick = function () { navigate('/'); };
     document.getElementById('logoutLink2').onclick = function () { api('/auth/logout', { method: 'POST' }).then(function () { navigate('/'); }); };
 
@@ -1095,8 +1182,9 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           name: existingTracker.name, form_title: existingTracker.form_title, description: existingTracker.description,
           checklist_items: existingTracker.checklist_items, conditional: existingTracker.conditional,
           assigned_cafes: existingTracker.assigned_cafes || [], exemptions: existingTracker.exemptions || [],
+          scenario: existingTracker.scenario || 'standard', sections: existingTracker.sections || [],
         }))
-      : Object.assign({ name: '', form_title: '', description: '', assigned_cafes: [], exemptions: [] }, defaultTemplate());
+      : Object.assign({ name: '', form_title: '', description: '', assigned_cafes: [], exemptions: [], scenario: 'standard', sections: [] }, defaultTemplate());
 
     var backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
@@ -1106,6 +1194,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       '<div class="field"><label>Submission Form Title (what branches see)</label><input type="text" id="teFormTitle" value="' + esc(data.form_title) + '" placeholder="Defaults to the launch name if left blank">' +
         '<div class="hint">This can be different from the internal launch name — e.g. simpler or more branch-friendly wording.</div></div>' +
       '<div class="field"><label>Description (optional)</label><input type="text" id="teDesc" value="' + esc(data.description || '') + '"></div>' +
+
+      '<div class="editor-section-title">Launch Scenario</div>' +
+      '<div class="hint" style="margin-bottom:10px;">Pre-Launch and Post-Launch bundle several submission types behind a single link — cafés can come back to the same link to submit each part (and, for repeatable parts like Training Proof, submit it more than once). Standard keeps the classic single-submission checklist.</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;" id="scenarioButtons">' +
+        Object.keys(SCENARIO_LABELS).map(function (sc) {
+          return '<button type="button" class="btn ' + (data.scenario === sc ? 'gold' : 'outline') + ' small" data-scenario="' + sc + '">' + SCENARIO_LABELS[sc] + '</button>';
+        }).join('') +
+      '</div>' +
+      (isEdit ? '' : '<div class="hint" style="margin-bottom:16px;">Switching scenario here only pre-fills a starting set of sections below — nothing is locked in until you save.</div>') +
 
       '<div id="unscopedFlagBanner"></div>' +
 
@@ -1122,20 +1219,29 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       '<div id="exemptionForm" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;"></div>' +
       '<div id="exemptionsList"></div>' +
 
-      '<div class="editor-section-title">Checklist Items</div>' +
-      '<div id="itemsList"></div>' +
-      '<div class="add-item-btn" id="addItemBtn">+ Add Check Item</div>' +
+      '<div id="flatChecklistBlock" style="display:' + (data.sections.length ? 'none' : 'block') + ';">' +
+        '<div class="editor-section-title">Checklist Items</div>' +
+        '<div id="itemsList"></div>' +
+        '<div class="add-item-btn" id="addItemBtn">+ Add Check Item</div>' +
 
-      '<div class="editor-section-title">Conditional Section (e.g. store-type specific checks)</div>' +
-      '<div class="conditional-toggle-row"><span class="label" style="font-size:12px;font-weight:600;">Enable a conditional section</span>' +
-        '<div class="toggle-group" id="condToggle">' +
-          '<button type="button" class="toggle-btn yes' + (data.conditional.enabled ? ' active' : '') + '" data-val="true">Yes</button>' +
-          '<button type="button" class="toggle-btn no' + (!data.conditional.enabled ? ' active' : '') + '" data-val="false">No</button>' +
-        '</div></div>' +
-      '<div id="condBody" style="display:' + (data.conditional.enabled ? 'block' : 'none') + ';">' +
-        '<div class="field"><label>Trigger Question (shown as a Yes/No toggle on the form)</label><input type="text" id="teCondLabel" value="' + esc(data.conditional.trigger_label) + '" placeholder="e.g. Is this a CPT Non-Halal Hybrid store?"></div>' +
-        '<div id="condItemsList"></div>' +
-        '<div class="add-item-btn" id="addCondItemBtn">+ Add Conditional Check Item</div>' +
+        '<div class="editor-section-title">Conditional Section (e.g. store-type specific checks)</div>' +
+        '<div class="conditional-toggle-row"><span class="label" style="font-size:12px;font-weight:600;">Enable a conditional section</span>' +
+          '<div class="toggle-group" id="condToggle">' +
+            '<button type="button" class="toggle-btn yes' + (data.conditional.enabled ? ' active' : '') + '" data-val="true">Yes</button>' +
+            '<button type="button" class="toggle-btn no' + (!data.conditional.enabled ? ' active' : '') + '" data-val="false">No</button>' +
+          '</div></div>' +
+        '<div id="condBody" style="display:' + (data.conditional.enabled ? 'block' : 'none') + ';">' +
+          '<div class="field"><label>Trigger Question (shown as a Yes/No toggle on the form)</label><input type="text" id="teCondLabel" value="' + esc(data.conditional.trigger_label) + '" placeholder="e.g. Is this a CPT Non-Halal Hybrid store?"></div>' +
+          '<div id="condItemsList"></div>' +
+          '<div class="add-item-btn" id="addCondItemBtn">+ Add Conditional Check Item</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div id="sectionsBlock" style="display:' + (data.sections.length ? 'block' : 'none') + ';">' +
+        '<div class="editor-section-title">Submission Sections</div>' +
+        '<div class="hint" style="margin-bottom:10px;">Each section is submitted separately through the same link. Mark a section "repeatable" to let a café submit it more than once (e.g. 3-4 training evidence entries) — Insights and the PDF report roll every occurrence up together.</div>' +
+        '<div id="sectionsList"></div>' +
+        '<div class="add-item-btn" id="addSectionBtn">+ Add Section</div>' +
       '</div>' +
 
       '<div id="teError"></div>' +
@@ -1297,6 +1403,113 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       };
     });
 
+    // ---- Scenario picker: swaps the flat checklist for the sections builder ----
+    document.getElementById('scenarioButtons').querySelectorAll('button[data-scenario]').forEach(function (btn) {
+      btn.onclick = function () {
+        var sc = btn.getAttribute('data-scenario');
+        data.scenario = sc;
+        document.getElementById('scenarioButtons').querySelectorAll('button[data-scenario]').forEach(function (b) {
+          b.className = 'btn ' + (b === btn ? 'gold' : 'outline') + ' small';
+        });
+        if (sc === 'standard') {
+          document.getElementById('flatChecklistBlock').style.display = 'block';
+          document.getElementById('sectionsBlock').style.display = 'none';
+        } else {
+          // Only auto-load the preset the very first time a scenario is picked with no sections yet —
+          // never overwrite sections the admin has already started customising.
+          if (!data.sections.length && SECTION_PRESETS[sc]) data.sections = SECTION_PRESETS[sc]();
+          document.getElementById('flatChecklistBlock').style.display = 'none';
+          document.getElementById('sectionsBlock').style.display = 'block';
+          renderSections();
+        }
+      };
+    });
+
+    // ---- Sections builder ----
+    function renderSections() {
+      var el = document.getElementById('sectionsList');
+      if (!data.sections.length) {
+        el.innerHTML = '<div class="empty-state" style="padding:16px;">No sections yet — add one below.</div>';
+        return;
+      }
+      el.innerHTML = data.sections.map(function (sec, sIdx) {
+        return '<div class="card" style="margin-bottom:14px;" data-sec-idx="' + sIdx + '">' +
+          '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">' +
+            '<input type="text" data-sec-field="label" value="' + esc(sec.label) + '" placeholder="Section name" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;font-weight:700;">' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;text-transform:uppercase;">' +
+              '<input type="checkbox" data-sec-field="repeatable"' + (sec.repeatable ? ' checked' : '') + '> Repeatable</label>' +
+            (sec.repeatable
+              ? '<label style="display:flex;align-items:center;gap:6px;font-size:11px;">Min <input type="number" min="1" max="20" data-sec-field="minOccurrences" value="' + sec.minOccurrences + '" style="width:50px;padding:5px;border:1px solid var(--grey-300);"></label>' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:11px;">Max <input type="number" min="1" max="20" data-sec-field="maxOccurrences" value="' + sec.maxOccurrences + '" style="width:50px;padding:5px;border:1px solid var(--grey-300);"></label>'
+              : '') +
+            '<span class="remove-item" data-remove-sec="1">✕ Remove Section</span>' +
+          '</div>' +
+          '<div id="secItems-' + sIdx + '"></div>' +
+          '<div class="add-item-btn" data-add-sec-item="' + sIdx + '" style="margin-top:6px;">+ Add Item to This Section</div>' +
+        '</div>';
+      }).join('');
+
+      data.sections.forEach(function (sec, sIdx) { renderSectionItemRows(sIdx); });
+
+      el.querySelectorAll('[data-sec-idx]').forEach(function (card) {
+        var sIdx = parseInt(card.getAttribute('data-sec-idx'), 10);
+        var sec = data.sections[sIdx];
+        card.querySelector('input[data-sec-field=label]').addEventListener('input', function (e) { sec.label = e.target.value; });
+        card.querySelector('input[data-sec-field=repeatable]').addEventListener('change', function (e) {
+          sec.repeatable = e.target.checked;
+          if (sec.repeatable) { sec.maxOccurrences = sec.maxOccurrences && sec.maxOccurrences > 1 ? sec.maxOccurrences : 4; sec.minOccurrences = sec.minOccurrences || 1; }
+          else { sec.maxOccurrences = 1; sec.minOccurrences = 1; }
+          renderSections();
+        });
+        var minInput = card.querySelector('input[data-sec-field=minOccurrences]');
+        if (minInput) minInput.addEventListener('input', function (e) { sec.minOccurrences = Math.max(1, parseInt(e.target.value, 10) || 1); });
+        var maxInput = card.querySelector('input[data-sec-field=maxOccurrences]');
+        if (maxInput) maxInput.addEventListener('input', function (e) { sec.maxOccurrences = Math.max(1, parseInt(e.target.value, 10) || 1); });
+        card.querySelector('[data-remove-sec]').addEventListener('click', function () { data.sections.splice(sIdx, 1); renderSections(); });
+      });
+      el.querySelectorAll('[data-add-sec-item]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var sIdx = parseInt(btn.getAttribute('data-add-sec-item'), 10);
+          data.sections[sIdx].items.push(newItem('', 'yesno'));
+          renderSectionItemRows(sIdx);
+        });
+      });
+    }
+
+    function renderSectionItemRows(sIdx) {
+      var items = data.sections[sIdx].items;
+      var c = document.getElementById('secItems-' + sIdx);
+      if (!c) return;
+      c.innerHTML = items.map(function (it, idx) {
+        if (!it.input_type) it.input_type = 'yesno';
+        return '<div class="item-row" data-idx="' + idx + '">' +
+          '<input type="text" value="' + esc(it.label) + '" data-field="label">' +
+          '<select data-field="input-type" style="font-size:10px;text-transform:uppercase;border:1px solid var(--grey-300);padding:5px 6px;font-family:var(--font);">' +
+            '<option value="yesno"' + (it.input_type === 'yesno' ? ' selected' : '') + '>Yes / No</option>' +
+            '<option value="checkbox"' + (it.input_type === 'checkbox' ? ' selected' : '') + '>Tick-box only</option>' +
+            '<option value="text"' + (it.input_type === 'text' ? ' selected' : '') + '>Comment Box</option>' +
+          '</select>' +
+          '<label class="photo-toggle"><input type="checkbox" data-field="photo"' + (it.requires_photo ? ' checked' : '') + '> Add Picture</label>' +
+          '<label class="photo-toggle"><input type="checkbox" data-field="date"' + (it.requires_date ? ' checked' : '') + '> Add Date</label>' +
+          '<span class="remove-item" data-remove="1">✕</span>' +
+        '</div>';
+      }).join('');
+      c.querySelectorAll('.item-row').forEach(function (row) {
+        var idx = parseInt(row.getAttribute('data-idx'), 10);
+        row.querySelector('input[data-field=label]').addEventListener('input', function (e) { items[idx].label = e.target.value; });
+        row.querySelector('input[data-field=photo]').addEventListener('change', function (e) { items[idx].requires_photo = e.target.checked; });
+        row.querySelector('input[data-field=date]').addEventListener('change', function (e) { items[idx].requires_date = e.target.checked; });
+        row.querySelector('select[data-field="input-type"]').addEventListener('change', function (e) { items[idx].input_type = e.target.value; });
+        row.querySelector('.remove-item').addEventListener('click', function () { items.splice(idx, 1); renderSectionItemRows(sIdx); });
+      });
+    }
+
+    if (data.sections.length) renderSections();
+    document.getElementById('addSectionBtn').onclick = function () {
+      data.sections.push(newSection('', 'custom', false, []));
+      renderSections();
+    };
+
     document.getElementById('teSave').onclick = function () {
       var errEl = document.getElementById('teError'); errEl.innerHTML = '';
       var name = document.getElementById('teName').value.trim();
@@ -1305,17 +1518,29 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       data.conditional.trigger_label = document.getElementById('teCondLabel') ? document.getElementById('teCondLabel').value.trim() : data.conditional.trigger_label;
 
       if (!name) { errEl.innerHTML = '<div class="error-msg">Launch name is required</div>'; return; }
-      var emptyItem = data.checklist_items.some(function (it) { return !it.label.trim(); });
-      if (emptyItem) { errEl.innerHTML = '<div class="error-msg">Every checklist item needs a label (or remove the blank one)</div>'; return; }
-      if (data.conditional.enabled) {
-        if (!data.conditional.trigger_label) { errEl.innerHTML = '<div class="error-msg">Conditional section needs a trigger question</div>'; return; }
-        var emptyCond = data.conditional.items.some(function (it) { return !it.label.trim(); });
-        if (emptyCond) { errEl.innerHTML = '<div class="error-msg">Every conditional item needs a label</div>'; return; }
+
+      var usingSections = data.sections.length > 0;
+      if (usingSections) {
+        var emptySecLabel = data.sections.some(function (s) { return !s.label.trim(); });
+        if (emptySecLabel) { errEl.innerHTML = '<div class="error-msg">Every section needs a name</div>'; return; }
+        var emptySecItem = data.sections.some(function (s) { return !s.items.length || s.items.some(function (it) { return !it.label.trim(); }); });
+        if (emptySecItem) { errEl.innerHTML = '<div class="error-msg">Every section needs at least one item, and every item needs a label</div>'; return; }
+        var badRange = data.sections.some(function (s) { return s.repeatable && s.minOccurrences > s.maxOccurrences; });
+        if (badRange) { errEl.innerHTML = '<div class="error-msg">A section\'s minimum submissions can\'t be greater than its maximum</div>'; return; }
+      } else {
+        var emptyItem = data.checklist_items.some(function (it) { return !it.label.trim(); });
+        if (emptyItem) { errEl.innerHTML = '<div class="error-msg">Every checklist item needs a label (or remove the blank one)</div>'; return; }
+        if (data.conditional.enabled) {
+          if (!data.conditional.trigger_label) { errEl.innerHTML = '<div class="error-msg">Conditional section needs a trigger question</div>'; return; }
+          var emptyCond = data.conditional.items.some(function (it) { return !it.label.trim(); });
+          if (emptyCond) { errEl.innerHTML = '<div class="error-msg">Every conditional item needs a label</div>'; return; }
+        }
       }
 
       var payload = {
         name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional,
         assignedCafes: data.assigned_cafes, exemptions: data.exemptions,
+        scenario: data.scenario, sections: usingSections ? data.sections : [],
       };
       var req = isEdit
         ? api('/trackers/' + existingTracker.id, { method: 'PATCH', body: payload })
@@ -1339,10 +1564,220 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         document.getElementById('formWrap').innerHTML = '<div class="form-card empty-state">This launch tracker has been archived and is no longer accepting submissions.</div>';
         return;
       }
-      buildSubmissionForm(tracker);
+      if (tracker.sections && tracker.sections.length) buildSectionedSubmissionFlow(tracker);
+      else buildSubmissionForm(tracker);
     }).catch(function () {
       document.getElementById('formWrap').innerHTML = '<div class="form-card empty-state">Launch link not found. Please check the URL with your regional manager.</div>';
     });
+  }
+
+  var DECLARATION_TEXT = 'I hereby declare that this task/launch/confirmation is 100% accurate and as per the requirements set out.';
+
+  // Shared item-block renderer used by both the legacy flat form and the sectioned flow —
+  // adds an optional date field alongside the existing optional photo field.
+  function sharedItemBlockHtml(it) {
+    var photoBlock = it.requires_photo
+      ? '<div class="photo-block" id="photoBlock-' + it.id + '">' +
+          '<div class="ph-label">Photo (optional)</div>' +
+          '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + it.id + '"></label>' +
+          '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
+        '</div>'
+      : '';
+    var dateBlock = it.requires_date
+      ? '<div class="field" style="margin:8px 0 10px;"><label>Date</label><input type="date" id="dateInput-' + it.id + '" style="width:100%;padding:9px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></div>'
+      : '';
+    var questionBlock;
+    if (it.input_type === 'checkbox') {
+      questionBlock = '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>';
+    } else if (it.input_type === 'text') {
+      questionBlock = '<div class="field" style="margin-bottom:10px;"><label>' + esc(it.label) + '</label>' +
+        '<textarea data-text-field="' + it.id + '" placeholder="Type your response…" style="width:100%;min-height:70px;padding:10px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></textarea></div>';
+    } else {
+      questionBlock = checkRow(it.id, esc(it.label));
+    }
+    return questionBlock + dateBlock + photoBlock;
+  }
+
+  // ---------------------- SECTIONED PUBLIC SUBMISSION FLOW (Pre-/Post-Launch scenarios) ----------------------
+  // One link, several independently-submitted sections. A café picks itself once, then works
+  // through a hub of sections — repeatable ones (e.g. Training Proof) can be submitted several
+  // times, tracked as separate "occurrences" that all roll up together in Insights/PDF.
+  function buildSectionedSubmissionFlow(tracker) {
+    var sf = { cafe: '', submittedBy: '', region: null };
+    var scoped = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : FLAT_STORES;
+    var wrap = document.getElementById('formWrap');
+
+    function renderCafePicker() {
+      var byRegion = {};
+      scoped.forEach(function (s) {
+        var region = s.region || 'OTHER';
+        if (!byRegion[region]) byRegion[region] = [];
+        byRegion[region].push(s.name);
+      });
+      var storeOptions = '<option value="">Select your café…</option>' +
+        Object.keys(byRegion).map(function (region) {
+          return '<optgroup label="' + esc(region) + '">' + byRegion[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>';
+        }).join('');
+
+      wrap.innerHTML =
+        '<div class="form-card">' +
+          '<div class="form-title">' + esc(tracker.form_title) + '</div>' +
+          '<div class="form-sub">' + esc(tracker.description || 'This launch has several parts — pick your café to see what\'s outstanding.') + '</div>' +
+          '<div class="field"><label>Café Name</label><select id="fCafe">' + storeOptions + '</select></div>' +
+          '<div class="field"><label>Submitted By</label><input type="text" id="fBy" placeholder="Your full name"></div>' +
+          '<div id="formError"></div>' +
+          '<button class="btn gold submit-btn" id="continueBtn">Continue</button>' +
+        '</div>';
+
+      document.getElementById('continueBtn').onclick = function () {
+        var cafe = document.getElementById('fCafe').value;
+        var by = document.getElementById('fBy').value.trim();
+        var errEl = document.getElementById('formError');
+        var missing = [];
+        if (!cafe) missing.push('Café name');
+        if (!by) missing.push('Submitted by');
+        if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
+        sf.cafe = cafe; sf.submittedBy = by;
+        var match = FLAT_STORES.find(function (s) { return s.name === cafe; });
+        sf.region = match ? match.region : null;
+        renderHub();
+      };
+    }
+
+    function statusLabel(sec) {
+      if (sec.status === 'complete') return sec.repeatable ? ('Complete (' + sec.submittedCount + '/' + sec.maxOccurrences + ')') : 'Complete';
+      if (sec.status === 'in_progress') return 'In Progress (' + sec.submittedCount + '/' + sec.minOccurrences + ' min)';
+      return 'Not Started';
+    }
+    function statusColor(sec) {
+      if (sec.status === 'complete') return 'var(--gold)';
+      if (sec.status === 'in_progress') return 'var(--red-flag, #a94442)';
+      return 'var(--grey-500)';
+    }
+
+    function renderHub(bannerHtml) {
+      wrap.innerHTML = '<div class="form-card"><div class="empty-state">Loading…</div></div>';
+      api('/trackers/' + tracker.id + '/cafe-progress?cafe=' + encodeURIComponent(sf.cafe)).then(function (data) {
+        var sections = data.sections;
+        var allDone = sections.every(function (s) { return s.status === 'complete'; });
+        wrap.innerHTML =
+          '<div class="form-card">' +
+            (bannerHtml || '') +
+            '<div class="form-title">' + esc(tracker.form_title) + '</div>' +
+            '<div class="form-sub">' + esc(sf.cafe) + ' · ' + esc(sf.submittedBy) + '</div>' +
+            (allDone
+              ? '<div class="success-screen" style="padding:24px 0;"><div class="tick">✓</div><h2>All Sections Complete</h2><p>' + esc(sf.cafe) + ' has submitted everything required for this launch.</p></div>'
+              : '') +
+            sections.map(function (sec) {
+              return '<div class="check-row" style="align-items:center;">' +
+                '<span class="label" style="flex:1;">' + esc(sec.label) + (sec.repeatable ? ' <span class="hint" style="display:inline;">(repeatable)</span>' : '') + '</span>' +
+                '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:' + statusColor(sec) + ';margin-right:10px;">' + statusLabel(sec) + '</span>' +
+                (sec.canSubmitMore
+                  ? '<button type="button" class="btn outline small" data-section-id="' + sec.id + '">' + (sec.submittedCount > 0 ? 'Add Another' : 'Submit') + '</button>'
+                  : '<button type="button" class="btn outline small" disabled>Done</button>') +
+              '</div>';
+            }).join('') +
+            '<button class="btn outline" id="switchCafeBtn" style="margin-top:16px;">Switch Café</button>' +
+          '</div>';
+
+        wrap.querySelectorAll('[data-section-id]').forEach(function (btn) {
+          btn.onclick = function () {
+            var sec = tracker.sections.find(function (s) { return s.id === btn.getAttribute('data-section-id'); });
+            renderSectionForm(sec);
+          };
+        });
+        document.getElementById('switchCafeBtn').onclick = renderCafePicker;
+      }).catch(function () {
+        wrap.innerHTML = '<div class="form-card empty-state">Could not load progress for this café. Please try again.</div>';
+      });
+    }
+
+    function renderSectionForm(sec) {
+      var answers = {};
+      sec.items.forEach(function (it) { answers[it.id] = { value: null, photo: null, text: '', date: null }; });
+
+      wrap.innerHTML =
+        '<div class="form-card">' +
+          '<div class="form-title">' + esc(sec.label) + '</div>' +
+          '<div class="form-sub">' + esc(sf.cafe) + ' · ' + esc(sf.submittedBy) + '</div>' +
+          sec.items.map(sharedItemBlockHtml).join('') +
+          '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>' + esc(DECLARATION_TEXT) + '</span></div>' +
+          '<div id="formError"></div>' +
+          '<button class="btn gold submit-btn" id="submitSectionBtn">Submit ' + esc(sec.label) + '</button>' +
+          '<button class="btn outline" id="backToHubBtn" style="margin-top:10px;">&larr; Back</button>' +
+        '</div>';
+
+      wrap.querySelectorAll('.toggle-group').forEach(function (group) {
+        var field = group.getAttribute('data-field');
+        group.querySelectorAll('.toggle-btn').forEach(function (btn) {
+          btn.onclick = function () {
+            group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            if (answers[field]) answers[field].value = btn.getAttribute('data-val') === 'true';
+          };
+        });
+      });
+      wrap.querySelectorAll('[data-checkbox-field]').forEach(function (cb) {
+        var field = cb.getAttribute('data-checkbox-field');
+        cb.addEventListener('change', function () { if (answers[field]) answers[field].value = cb.checked ? true : null; });
+      });
+      wrap.querySelectorAll('[data-text-field]').forEach(function (ta) {
+        var field = ta.getAttribute('data-text-field');
+        ta.addEventListener('input', function () {
+          var text = ta.value.trim();
+          if (answers[field]) { answers[field].value = text ? true : null; answers[field].text = text; }
+        });
+      });
+      sec.items.forEach(function (it) {
+        if (it.requires_photo) {
+          var input = document.getElementById('photoInput-' + it.id);
+          if (input) input.addEventListener('change', function (e) {
+            var file = e.target.files[0];
+            if (!file) return;
+            compressImage(file).then(function (dataUrl) {
+              answers[it.id].photo = dataUrl;
+              var img = document.getElementById('preview-' + it.id);
+              img.src = dataUrl; img.style.display = 'block';
+            }).catch(function () { alert('Could not process that photo — please try another.'); });
+          });
+        }
+        if (it.requires_date) {
+          var dateInput = document.getElementById('dateInput-' + it.id);
+          if (dateInput) dateInput.addEventListener('input', function () { answers[it.id].date = dateInput.value || null; });
+        }
+      });
+
+      document.getElementById('backToHubBtn').onclick = function () { renderHub(); };
+      document.getElementById('submitSectionBtn').onclick = function () {
+        var errEl = document.getElementById('formError');
+        var disclaimerConfirmed = document.getElementById('fDisclaimer').checked;
+        var missing = [];
+        sec.items.forEach(function (it) {
+          if (answers[it.id].value === null) missing.push(it.label);
+          if (it.requires_date && !answers[it.id].date) missing.push(it.label + ' (date)');
+        });
+        if (!disclaimerConfirmed) missing.push('Declaration confirmation');
+        if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
+
+        var btn = document.getElementById('submitSectionBtn');
+        btn.disabled = true; btn.textContent = 'Submitting…';
+        var answerArr = sec.items.map(function (it) {
+          return { id: it.id, label: it.label, value: answers[it.id].value, photo: answers[it.id].photo, text: answers[it.id].text || '', date: answers[it.id].date };
+        });
+
+        api('/trackers/' + tracker.id + '/submissions', {
+          method: 'POST',
+          body: { cafe: sf.cafe, region: sf.region, submittedBy: sf.submittedBy, sectionId: sec.id, answers: answerArr, disclaimerConfirmed: disclaimerConfirmed },
+        }).then(function () {
+          renderHub('<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;margin-bottom:14px;border:1px solid var(--gold);">✓ ' + esc(sec.label) + ' submitted.</div>');
+        }).catch(function (e) {
+          btn.disabled = false; btn.textContent = 'Submit ' + sec.label;
+          errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>';
+        });
+      };
+    }
+
+    renderCafePicker();
   }
 
   function buildSubmissionForm(tracker) {
@@ -1420,7 +1855,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             tracker.conditional.items.map(itemBlockHtml).join('') +
           '</div></div>' : '') +
 
-        '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>I hereby confirm that my submission is accurate and in line with the requirements stipulated above.</span></div>' +
+        '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>' + esc(DECLARATION_TEXT) + '</span></div>' +
 
         '<div id="formError"></div>' +
         '<button class="btn gold submit-btn" id="submitBtn">Submit Launch Confirmation</button>' +
