@@ -2,6 +2,36 @@
 
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
+## What's new in this update
+- **Multi-submission sections**: a launch tracker can now be built from independently-submitted
+  **sections** instead of one flat checklist. Cafés work through a single link, submitting each
+  section separately (and, for repeatable sections, more than once — e.g. 3-4 Training Proof
+  entries). Everything rolls up together in Insights and the PDF.
+- **Pre-Launch scenario**: one-click preset bundling Training Proof (repeatable, dates + photos),
+  Stock Receipt Confirmation, Collaterals Receipt, Point of Sale Updates, and Online Training
+  Completion.
+- **Post-Launch scenario**: one-click preset with Product On Display and Product Leaving Kitchen,
+  each with photo evidence.
+- **Standard scenario** (the default) is completely unchanged — existing trackers keep behaving
+  exactly as before, one flat submission per café.
+- **Branding**: PDF header now shows the Bootlegger wordmark only (no "Coffee Co." wording), the
+  dashboard/detail/PDF footers no longer repeat the company name, and the final confirmation
+  tick-box now reads: *"I hereby declare that this task/launch/confirmation is 100% accurate and
+  as per the requirements set out."*
+
+This is a **database-safe update** — it adds new columns (`scenario`, `sections` on trackers;
+`section_id`, `section_label`, `occurrence` on submissions) without touching existing data. The
+old one-submission-per-café uniqueness rule is preserved for every existing/standard tracker;
+it's only relaxed (per section+occurrence) for new sectioned trackers. Just push the code — no
+manual migration needed.
+
+### Building a Pre-/Post-Launch tracker
+In **+ New Launch Tracker**, pick **Pre-Launch** or **Post-Launch** under "Launch Scenario" —
+this loads a starting set of sections you can freely rename, add to, or remove before saving.
+Each section can be marked **Repeatable** with a Min/Max submission count (e.g. Training Proof:
+min 3, max 4). Branches see a progress hub on the submission link showing what's outstanding for
+their café, and can return to the same link to add more.
+
 ## 1. Push to GitHub
 1. Create a new **private** repo, e.g. `Franlo2026/launch-checklist-tracker`
 2. In this folder:
