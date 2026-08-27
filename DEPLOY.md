@@ -3,17 +3,19 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
+- **Mix-and-match sections**: the template editor now offers every Standard, Pre-Launch, and
+  Post-Launch section as an individual "+ Add" button, grouped by category, so you can build a
+  template from whichever sections actually apply — e.g. a launch that needs Training Proof and
+  Stock Receipt but not Collaterals, plus a Post-Launch Product On Display check, all in one
+  template. Each add is its own editable copy.
+- **Archived tab**: the dashboard now has Active / Archived tabs (with live counts) instead of
+  mixing everything into one list — archived trackers are one click away instead of scrolled past.
 - **Multi-submission sections**: a launch tracker can now be built from independently-submitted
   **sections** instead of one flat checklist. Cafés work through a single link, submitting each
   section separately (and, for repeatable sections, more than once — e.g. 3-4 Training Proof
   entries). Everything rolls up together in Insights and the PDF.
-- **Pre-Launch scenario**: one-click preset bundling Training Proof (repeatable, dates + photos),
-  Stock Receipt Confirmation, Collaterals Receipt, Point of Sale Updates, and Online Training
-  Completion.
-- **Post-Launch scenario**: one-click preset with Product On Display and Product Leaving Kitchen,
-  each with photo evidence.
-- **Standard scenario** (the default) is completely unchanged — existing trackers keep behaving
-  exactly as before, one flat submission per café.
+- **Standard scenario** (the default, no sections added) is completely unchanged — existing
+  trackers keep behaving exactly as before, one flat submission per café.
 - **Branding**: PDF header now shows the Bootlegger wordmark only (no "Coffee Co." wording), the
   dashboard/detail/PDF footers no longer repeat the company name, and the final confirmation
   tick-box now reads: *"I hereby declare that this task/launch/confirmation is 100% accurate and
@@ -25,12 +27,13 @@ old one-submission-per-café uniqueness rule is preserved for every existing/sta
 it's only relaxed (per section+occurrence) for new sectioned trackers. Just push the code — no
 manual migration needed.
 
-### Building a Pre-/Post-Launch tracker
-In **+ New Launch Tracker**, pick **Pre-Launch** or **Post-Launch** under "Launch Scenario" —
-this loads a starting set of sections you can freely rename, add to, or remove before saving.
-Each section can be marked **Repeatable** with a Min/Max submission count (e.g. Training Proof:
-min 3, max 4). Branches see a progress hub on the submission link showing what's outstanding for
-their café, and can return to the same link to add more.
+### Building a template with mixed sections
+In **+ New Launch Tracker**, under "Add Sections" you'll see three groups — Standard, Pre-Launch,
+and Post-Launch — each listing its available sections as individual buttons. Click any that apply
+(you're not limited to one category) to add an editable copy to the template; rename, add/remove
+items, or mark a section **Repeatable** with a Min/Max submission count (e.g. Training Proof: min
+3, max 4) as needed before saving. Branches see a progress hub on the submission link showing
+what's outstanding for their café, and can return to the same link to add more.
 
 ## 1. Push to GitHub
 1. Create a new **private** repo, e.g. `Franlo2026/launch-checklist-tracker`
