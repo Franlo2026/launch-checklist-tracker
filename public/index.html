@@ -290,10 +290,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   var idCounter = 0;
   function genId(prefix) { idCounter += 1; return prefix + '_' + idCounter + '_' + Date.now().toString(36); }
 
-  // ---- Scenario presets ----
-  // Loaded into an empty sections list the moment a scenario is chosen in the editor — the admin
-  // can still add/remove/edit anything afterwards. Picking "Standard" keeps the classic flat
-  // checklist behaviour untouched (sections stays empty, exactly like every tracker before this).
+  // ---- Section presets ----
+  // Grouped by category so the editor can offer them individually — an admin building a new
+  // template can mix and match sections from Standard, Pre-Launch, and Post-Launch as needed,
+  // rather than being locked into one bundle. Each entry's build() returns a fresh section with
+  // new ids, so the same preset can be added more than once if needed.
   function newSection(label, type, repeatable, items, maxOccurrences, minOccurrences) {
     return {
       id: genId('sec'), label: label, type: type,
@@ -306,39 +307,71 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function newItem(label, inputType, requiresPhoto, requiresDate) {
     return { id: genId('it'), label: label, input_type: inputType || 'yesno', requires_photo: !!requiresPhoto, requires_date: !!requiresDate };
   }
-  var SECTION_PRESETS = {
-    pre_launch: function () {
-      return [
-        newSection('Training Proof', 'training_proof', true, [
-          newItem('Staff member trained on new launch', 'yesno', true, true),
-        ], 4, 3),
-        newSection('Stock Receipt Confirmation', 'stock_receipt', false, [
-          newItem('Stock received in full ahead of launch', 'yesno', true),
-          newItem('Any shortages or damages (details)', 'text'),
-        ]),
-        newSection('Collaterals Receipt', 'collaterals_receipt', false, [
-          newItem('Launch collateral received', 'yesno', true),
-        ]),
-        newSection('Point of Sale Updates', 'pos_update', false, [
-          newItem('GAAP POS updated with new item(s)/pricing', 'yesno'),
-        ]),
-        newSection('Online Training Completion', 'online_training', false, [
-          newItem('All required staff completed online training', 'yesno'),
-        ]),
-      ];
+  var SECTION_LIBRARY = {
+    standard: {
+      label: 'Standard',
+      sections: [
+        {
+          key: 'standard_checklist', label: 'Launch Checklist',
+          build: function () {
+            return newSection('Launch Checklist', 'standard_checklist', false, [
+              newItem('Posters displayed', 'yesno', true),
+              newItem('GAAP POS updated', 'yesno'),
+              newItem('New retail price tags displayed', 'yesno'),
+              newItem('All outdated collateral has been removed and discarded', 'checkbox'),
+            ]);
+          },
+        },
+      ],
     },
-    post_launch: function () {
-      return [
-        newSection('Product On Display', 'display_evidence', false, [
-          newItem('Product visibly on display', 'yesno', true),
-        ]),
-        newSection('Product Leaving Kitchen', 'kitchen_evidence', false, [
-          newItem('Product prepared and leaving the kitchen', 'yesno', true),
-        ]),
-      ];
+    pre_launch: {
+      label: 'Pre-Launch',
+      sections: [
+        { key: 'training_proof', label: 'Training Proof', build: function () {
+          return newSection('Training Proof', 'training_proof', true, [newItem('Staff member trained on new launch', 'yesno', true, true)], 4, 3);
+        } },
+        { key: 'stock_receipt', label: 'Stock Receipt Confirmation', build: function () {
+          return newSection('Stock Receipt Confirmation', 'stock_receipt', false, [
+            newItem('Stock received in full ahead of launch', 'yesno', true),
+            newItem('Any shortages or damages (details)', 'text'),
+          ]);
+        } },
+        { key: 'collaterals_receipt', label: 'Collaterals Receipt', build: function () {
+          return newSection('Collaterals Receipt', 'collaterals_receipt', false, [newItem('Launch collateral received', 'yesno', true)]);
+        } },
+        { key: 'pos_update', label: 'Point of Sale Updates', build: function () {
+          return newSection('Point of Sale Updates', 'pos_update', false, [newItem('GAAP POS updated with new item(s)/pricing', 'yesno')]);
+        } },
+        { key: 'online_training', label: 'Online Training Completion', build: function () {
+          return newSection('Online Training Completion', 'online_training', false, [newItem('All required staff completed online training', 'yesno')]);
+        } },
+      ],
+    },
+    post_launch: {
+      label: 'Post-Launch',
+      sections: [
+        { key: 'display_evidence', label: 'Product On Display', build: function () {
+          return newSection('Product On Display', 'display_evidence', false, [newItem('Product visibly on display', 'yesno', true)]);
+        } },
+        { key: 'kitchen_evidence', label: 'Product Leaving Kitchen', build: function () {
+          return newSection('Product Leaving Kitchen', 'kitchen_evidence', false, [newItem('Product prepared and leaving the kitchen', 'yesno', true)]);
+        } },
+      ],
     },
   };
-  var SCENARIO_LABELS = { standard: 'Standard', pre_launch: 'Pre-Launch', post_launch: 'Post-Launch' };
+  // Best-effort informational tag derived from whichever preset types ended up in the section
+  // list — purely descriptive (shown nowhere critical), since sections can now be freely mixed.
+  var PRE_LAUNCH_TYPES = ['training_proof', 'stock_receipt', 'collaterals_receipt', 'pos_update', 'online_training'];
+  var POST_LAUNCH_TYPES = ['display_evidence', 'kitchen_evidence'];
+  function deriveScenario(sections) {
+    if (!sections.length) return 'standard';
+    var hasPre = sections.some(function (s) { return PRE_LAUNCH_TYPES.indexOf(s.type) !== -1; });
+    var hasPost = sections.some(function (s) { return POST_LAUNCH_TYPES.indexOf(s.type) !== -1; });
+    if (hasPre && hasPost) return 'custom';
+    if (hasPre) return 'pre_launch';
+    if (hasPost) return 'post_launch';
+    return 'custom';
+  }
 
   var app = document.getElementById('app');
 
@@ -447,6 +480,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     };
   }
 
+  var dashboardTab = 'active';
+
   // ---------------------- DASHBOARD ----------------------
   function renderDashboard() {
     app.innerHTML =
@@ -461,6 +496,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           '<div><h1>Launch Trackers</h1><div class="sub">Menu &amp; product launch checklist submissions</div></div>' +
           '<button class="btn gold" id="btnNewTracker">+ New Launch Tracker</button>' +
         '</div>' +
+        '<div style="display:flex;gap:6px;margin-bottom:16px;" id="dashboardTabs">' +
+          '<button type="button" class="btn small" id="tabActive">Active</button>' +
+          '<button type="button" class="btn outline small" id="tabArchived">Archived</button>' +
+        '</div>' +
         '<div id="trackerList"><div class="empty-state">Loading…</div></div>' +
       '</div>' +
       '<div class="footer"><div>Internal Use Only</div></div>';
@@ -472,16 +511,33 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     document.getElementById('btnNewTracker').onclick = function () { openTemplateEditor(null); };
 
     api('/trackers').then(function (trackers) {
-      var el = document.getElementById('trackerList');
-      if (!trackers.length) {
-        el.innerHTML = '<div class="empty-state">No launch trackers yet. Click "+ New Launch Tracker" to create one.</div>';
-        return;
+      var activeTrackers = trackers.filter(function (t) { return t.active; });
+      var archivedTrackers = trackers.filter(function (t) { return !t.active; });
+
+      function renderTab() {
+        document.getElementById('tabActive').className = 'btn small' + (dashboardTab === 'active' ? '' : ' outline');
+        document.getElementById('tabActive').textContent = 'Active (' + activeTrackers.length + ')';
+        document.getElementById('tabArchived').className = 'btn small' + (dashboardTab === 'archived' ? '' : ' outline');
+        document.getElementById('tabArchived').textContent = 'Archived (' + archivedTrackers.length + ')';
+
+        var list = dashboardTab === 'archived' ? archivedTrackers : activeTrackers;
+        var el = document.getElementById('trackerList');
+        if (!list.length) {
+          el.innerHTML = '<div class="empty-state">' + (dashboardTab === 'archived'
+            ? 'No archived launch trackers.'
+            : 'No active launch trackers yet. Click "+ New Launch Tracker" to create one.') + '</div>';
+          return;
+        }
+        el.innerHTML = '<div class="tracker-grid">' + list.map(trackerCardHtml).join('') + '</div>';
+        list.forEach(function (t) {
+          var card = document.getElementById('card-' + t.id);
+          if (card) card.onclick = function () { navigate('/tracker/' + t.id); };
+        });
       }
-      el.innerHTML = '<div class="tracker-grid">' + trackers.map(trackerCardHtml).join('') + '</div>';
-      trackers.forEach(function (t) {
-        var card = document.getElementById('card-' + t.id);
-        if (card) card.onclick = function () { navigate('/tracker/' + t.id); };
-      });
+
+      document.getElementById('tabActive').onclick = function () { dashboardTab = 'active'; renderTab(); };
+      document.getElementById('tabArchived').onclick = function () { dashboardTab = 'archived'; renderTab(); };
+      renderTab();
     }).catch(function (e) { if (e.status === 401) renderLogin(false); });
   }
 
@@ -1195,14 +1251,22 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '<div class="hint">This can be different from the internal launch name — e.g. simpler or more branch-friendly wording.</div></div>' +
       '<div class="field"><label>Description (optional)</label><input type="text" id="teDesc" value="' + esc(data.description || '') + '"></div>' +
 
-      '<div class="editor-section-title">Launch Scenario</div>' +
-      '<div class="hint" style="margin-bottom:10px;">Pre-Launch and Post-Launch bundle several submission types behind a single link — cafés can come back to the same link to submit each part (and, for repeatable parts like Training Proof, submit it more than once). Standard keeps the classic single-submission checklist.</div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;" id="scenarioButtons">' +
-        Object.keys(SCENARIO_LABELS).map(function (sc) {
-          return '<button type="button" class="btn ' + (data.scenario === sc ? 'gold' : 'outline') + ' small" data-scenario="' + sc + '">' + SCENARIO_LABELS[sc] + '</button>';
+      '<div class="editor-section-title">Add Sections</div>' +
+      '<div class="hint" style="margin-bottom:10px;">Add any section that applies to this launch — mix and match from Standard, Pre-Launch, and Post-Launch as needed. Each is added as its own editable copy; repeatable ones (like Training Proof) can be submitted more than once through the same link.</div>' +
+      '<div id="sectionLibrary">' +
+        Object.keys(SECTION_LIBRARY).map(function (catKey) {
+          var cat = SECTION_LIBRARY[catKey];
+          return '<div style="margin-bottom:10px;">' +
+            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--grey-500);margin-bottom:6px;">' + esc(cat.label) + '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+              cat.sections.map(function (s) {
+                return '<button type="button" class="btn outline small" data-lib-cat="' + catKey + '" data-lib-key="' + s.key + '">+ ' + esc(s.label) + '</button>';
+              }).join('') +
+            '</div>' +
+          '</div>';
         }).join('') +
       '</div>' +
-      (isEdit ? '' : '<div class="hint" style="margin-bottom:16px;">Switching scenario here only pre-fills a starting set of sections below — nothing is locked in until you save.</div>') +
+      '<div style="margin-bottom:16px;"></div>' +
 
       '<div id="unscopedFlagBanner"></div>' +
 
@@ -1403,25 +1467,17 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       };
     });
 
-    // ---- Scenario picker: swaps the flat checklist for the sections builder ----
-    document.getElementById('scenarioButtons').querySelectorAll('button[data-scenario]').forEach(function (btn) {
+    // ---- Section library quick-add: mix and match presets from any category ----
+    document.getElementById('sectionLibrary').querySelectorAll('button[data-lib-key]').forEach(function (btn) {
       btn.onclick = function () {
-        var sc = btn.getAttribute('data-scenario');
-        data.scenario = sc;
-        document.getElementById('scenarioButtons').querySelectorAll('button[data-scenario]').forEach(function (b) {
-          b.className = 'btn ' + (b === btn ? 'gold' : 'outline') + ' small';
-        });
-        if (sc === 'standard') {
-          document.getElementById('flatChecklistBlock').style.display = 'block';
-          document.getElementById('sectionsBlock').style.display = 'none';
-        } else {
-          // Only auto-load the preset the very first time a scenario is picked with no sections yet —
-          // never overwrite sections the admin has already started customising.
-          if (!data.sections.length && SECTION_PRESETS[sc]) data.sections = SECTION_PRESETS[sc]();
-          document.getElementById('flatChecklistBlock').style.display = 'none';
-          document.getElementById('sectionsBlock').style.display = 'block';
-          renderSections();
-        }
+        var catKey = btn.getAttribute('data-lib-cat');
+        var key = btn.getAttribute('data-lib-key');
+        var preset = SECTION_LIBRARY[catKey].sections.find(function (s) { return s.key === key; });
+        if (!preset) return;
+        data.sections.push(preset.build());
+        document.getElementById('flatChecklistBlock').style.display = 'none';
+        document.getElementById('sectionsBlock').style.display = 'block';
+        renderSections();
       };
     });
 
@@ -1465,7 +1521,14 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         if (minInput) minInput.addEventListener('input', function (e) { sec.minOccurrences = Math.max(1, parseInt(e.target.value, 10) || 1); });
         var maxInput = card.querySelector('input[data-sec-field=maxOccurrences]');
         if (maxInput) maxInput.addEventListener('input', function (e) { sec.maxOccurrences = Math.max(1, parseInt(e.target.value, 10) || 1); });
-        card.querySelector('[data-remove-sec]').addEventListener('click', function () { data.sections.splice(sIdx, 1); renderSections(); });
+        card.querySelector('[data-remove-sec]').addEventListener('click', function () {
+          data.sections.splice(sIdx, 1);
+          if (!data.sections.length) {
+            document.getElementById('flatChecklistBlock').style.display = 'block';
+            document.getElementById('sectionsBlock').style.display = 'none';
+          }
+          renderSections();
+        });
       });
       el.querySelectorAll('[data-add-sec-item]').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -1540,7 +1603,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       var payload = {
         name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional,
         assignedCafes: data.assigned_cafes, exemptions: data.exemptions,
-        scenario: data.scenario, sections: usingSections ? data.sections : [],
+        scenario: deriveScenario(usingSections ? data.sections : []), sections: usingSections ? data.sections : [],
       };
       var req = isEdit
         ? api('/trackers/' + existingTracker.id, { method: 'PATCH', body: payload })
