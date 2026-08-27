@@ -1636,35 +1636,42 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
   var DECLARATION_TEXT = 'I hereby declare that this task/launch/confirmation is 100% accurate and as per the requirements set out.';
 
-  // Shared item-block renderer used by both the legacy flat form and the sectioned flow —
-  // adds an optional date field alongside the existing optional photo field.
-  function sharedItemBlockHtml(it) {
+  // Shared item-block renderer used by both the legacy flat form and the sectioned flow.
+  // keyPrefix namespaces every element id/data-field so the same item can be rendered more than
+  // once on the page at once (e.g. Entry 1 / Entry 2 of a repeatable section) without id clashes;
+  // it defaults to the item's own id for the legacy single-instance flat form.
+  function sharedItemBlockHtml(it, keyPrefix) {
+    var k = keyPrefix || it.id;
     var photoBlock = it.requires_photo
-      ? '<div class="photo-block" id="photoBlock-' + it.id + '">' +
-          '<div class="ph-label">Photo (optional)</div>' +
-          '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + it.id + '"></label>' +
-          '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
+      ? '<div class="photo-block" id="photoBlock-' + k + '">' +
+          '<div class="ph-label">Photo</div>' +
+          '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + k + '"></label>' +
+          '<img class="photo-preview" id="preview-' + k + '" style="display:none;">' +
         '</div>'
       : '';
     var dateBlock = it.requires_date
-      ? '<div class="field" style="margin:8px 0 10px;"><label>Date</label><input type="date" id="dateInput-' + it.id + '" style="width:100%;padding:9px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></div>'
+      ? '<div class="field" style="margin:8px 0 10px;"><label>Date</label><input type="date" id="dateInput-' + k + '" style="width:100%;padding:9px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></div>'
       : '';
     var questionBlock;
     if (it.input_type === 'checkbox') {
-      questionBlock = '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + it.id + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>';
+      questionBlock = '<div class="check-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;"><input type="checkbox" data-checkbox-field="' + k + '" style="width:18px;height:18px;"><span class="label">' + esc(it.label) + '</span></label></div>';
     } else if (it.input_type === 'text') {
       questionBlock = '<div class="field" style="margin-bottom:10px;"><label>' + esc(it.label) + '</label>' +
-        '<textarea data-text-field="' + it.id + '" placeholder="Type your response…" style="width:100%;min-height:70px;padding:10px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></textarea></div>';
+        '<textarea data-text-field="' + k + '" placeholder="Type your response…" style="width:100%;min-height:70px;padding:10px 12px;border:1px solid var(--grey-300);font-family:var(--font);font-size:13px;"></textarea></div>';
     } else {
-      questionBlock = checkRow(it.id, esc(it.label));
+      questionBlock = checkRow(k, esc(it.label));
     }
     return questionBlock + dateBlock + photoBlock;
   }
 
   // ---------------------- SECTIONED PUBLIC SUBMISSION FLOW (Pre-/Post-Launch scenarios) ----------------------
-  // One link, several independently-submitted sections. A café picks itself once, then works
-  // through a hub of sections — repeatable ones (e.g. Training Proof) can be submitted several
-  // times, tracked as separate "occurrences" that all roll up together in Insights/PDF.
+  // One link, several independently-submitted sections, all on one page. Each section carries a
+  // dropdown instead of its own submit button — "Skip for now" / "Complete this section" for a
+  // singular section, or a count of new entries to add for a repeatable one (e.g. Training
+  // Proof). There's no per-section declaration or submit; everything gets bundled into ONE
+  // declaration + ONE submit at the bottom, and only the sections/entries actually filled in are
+  // sent — a café is never blocked from submitting just because other sections aren't done yet,
+  // since the workflow expects them to come back to the same link as things progress.
   function buildSectionedSubmissionFlow(tracker) {
     var sf = { cafe: '', submittedBy: '', region: null };
     var scoped = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : FLAT_STORES;
@@ -1703,141 +1710,199 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         sf.cafe = cafe; sf.submittedBy = by;
         var match = FLAT_STORES.find(function (s) { return s.name === cafe; });
         sf.region = match ? match.region : null;
-        renderHub();
+        renderCombinedForm();
       };
     }
 
-    function statusLabel(sec) {
-      if (sec.status === 'complete') return sec.repeatable ? ('Complete (' + sec.submittedCount + '/' + sec.maxOccurrences + ')') : 'Complete';
-      if (sec.status === 'in_progress') return 'In Progress (' + sec.submittedCount + '/' + sec.minOccurrences + ' min)';
-      return 'Not Started';
-    }
-    function statusColor(sec) {
-      if (sec.status === 'complete') return 'var(--gold)';
-      if (sec.status === 'in_progress') return 'var(--red-flag, #a94442)';
-      return 'var(--grey-500)';
-    }
-
-    function renderHub(bannerHtml) {
+    function renderCombinedForm(bannerHtml) {
       wrap.innerHTML = '<div class="form-card"><div class="empty-state">Loading…</div></div>';
-      api('/trackers/' + tracker.id + '/cafe-progress?cafe=' + encodeURIComponent(sf.cafe)).then(function (data) {
-        var sections = data.sections;
-        var allDone = sections.every(function (s) { return s.status === 'complete'; });
+      api('/trackers/' + tracker.id + '/cafe-progress?cafe=' + encodeURIComponent(sf.cafe)).then(function (progressData) {
+        var progressById = {};
+        progressData.sections.forEach(function (p) { progressById[p.id] = p; });
+
+        var allDone = progressData.sections.every(function (s) { return s.status === 'complete'; });
+
+        // entries[secId] = array of { itemId: {value,photo,text,date} } objects, one per NEW
+        // entry the café is filling in right now. Non-repeatable sections have at most 1.
+        var entries = {};
+        tracker.sections.forEach(function (sec) { entries[sec.id] = []; });
+
+        function blankAnswers(sec) {
+          var a = {};
+          sec.items.forEach(function (it) { a[it.id] = { value: null, photo: null, text: '', date: null }; });
+          return a;
+        }
+
+        function entryBlockHtml(sec, entryIdx) {
+          var keyBase = sec.id + '__' + entryIdx;
+          return '<div class="hybrid-section" style="margin-top:10px;" data-entry-block="' + sec.id + '-' + entryIdx + '">' +
+            (sec.repeatable ? '<div class="section-tag">Entry ' + (entryIdx + 1) + '</div>' : '') +
+            sec.items.map(function (it) { return sharedItemBlockHtml(it, keyBase + '::' + it.id); }).join('') +
+          '</div>';
+        }
+
+        function sectionCardHtml(sec) {
+          var progress = progressById[sec.id] || { canSubmitMore: true, submittedCount: 0, maxOccurrences: sec.maxOccurrences, status: 'not_started' };
+          if (!progress.canSubmitMore) {
+            return '<div class="check-row" style="align-items:center;">' +
+              '<span class="label" style="flex:1;">' + esc(sec.label) + '</span>' +
+              '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold);">✓ Complete' + (sec.repeatable ? ' (' + progress.submittedCount + '/' + progress.maxOccurrences + ')' : '') + '</span>' +
+            '</div>';
+          }
+
+          var remaining = sec.repeatable ? (progress.maxOccurrences - progress.submittedCount) : 1;
+          var dropdownOptions;
+          if (sec.repeatable) {
+            var opts = ['<option value="0">Skip for now</option>'];
+            for (var n = 1; n <= remaining; n++) opts.push('<option value="' + n + '">Add ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + '</option>');
+            dropdownOptions = opts.join('');
+          } else {
+            dropdownOptions = '<option value="0">Skip for now</option><option value="1">Complete this section</option>';
+          }
+
+          return '<div style="border-top:1px solid var(--grey-200);padding-top:14px;margin-top:14px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
+              '<span class="label" style="font-weight:700;">' + esc(sec.label) + (progress.submittedCount > 0 ? ' <span class="hint" style="display:inline;">(' + progress.submittedCount + ' submitted so far)</span>' : '') + '</span>' +
+              '<select data-section-select="' + sec.id + '" style="padding:8px 10px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + dropdownOptions + '</select>' +
+            '</div>' +
+            '<div id="entryContainer-' + sec.id + '"></div>' +
+          '</div>';
+        }
+
         wrap.innerHTML =
           '<div class="form-card">' +
             (bannerHtml || '') +
             '<div class="form-title">' + esc(tracker.form_title) + '</div>' +
             '<div class="form-sub">' + esc(sf.cafe) + ' · ' + esc(sf.submittedBy) + '</div>' +
             (allDone
-              ? '<div class="success-screen" style="padding:24px 0;"><div class="tick">✓</div><h2>All Sections Complete</h2><p>' + esc(sf.cafe) + ' has submitted everything required for this launch.</p></div>'
+              ? '<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;margin-bottom:14px;border:1px solid var(--gold);">✓ Every section has already been fully submitted for ' + esc(sf.cafe) + '.</div>'
               : '') +
-            sections.map(function (sec) {
-              return '<div class="check-row" style="align-items:center;">' +
-                '<span class="label" style="flex:1;">' + esc(sec.label) + (sec.repeatable ? ' <span class="hint" style="display:inline;">(repeatable)</span>' : '') + '</span>' +
-                '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:' + statusColor(sec) + ';margin-right:10px;">' + statusLabel(sec) + '</span>' +
-                (sec.canSubmitMore
-                  ? '<button type="button" class="btn outline small" data-section-id="' + sec.id + '">' + (sec.submittedCount > 0 ? 'Add Another' : 'Submit') + '</button>'
-                  : '<button type="button" class="btn outline small" disabled>Done</button>') +
-              '</div>';
-            }).join('') +
-            '<button class="btn outline" id="switchCafeBtn" style="margin-top:16px;">Switch Café</button>' +
+            tracker.sections.map(sectionCardHtml).join('') +
+            '<div class="disclaimer-check" style="margin-top:20px;"><input type="checkbox" id="fDisclaimer"><span>' + esc(DECLARATION_TEXT) + '</span></div>' +
+            '<div id="formError"></div>' +
+            '<button class="btn gold submit-btn" id="finalSubmitBtn">Submit</button>' +
+            '<button class="btn outline" id="switchCafeBtn" style="margin-top:10px;">Switch Café</button>' +
           '</div>';
 
-        wrap.querySelectorAll('[data-section-id]').forEach(function (btn) {
-          btn.onclick = function () {
-            var sec = tracker.sections.find(function (s) { return s.id === btn.getAttribute('data-section-id'); });
-            renderSectionForm(sec);
-          };
+        // Wiring is scoped per entry block so re-rendering one section's entries never disturbs
+        // fields already filled in on another section.
+        function wireEntryBlock(sec, entryIdx) {
+          var keyBase = sec.id + '__' + entryIdx;
+          var block = wrap.querySelector('[data-entry-block="' + sec.id + '-' + entryIdx + '"]');
+          if (!block) return;
+          var answers = entries[sec.id][entryIdx];
+
+          block.querySelectorAll('.toggle-group').forEach(function (group) {
+            var field = group.getAttribute('data-field');
+            var itemId = field.split('::')[1];
+            group.querySelectorAll('.toggle-btn').forEach(function (btn) {
+              btn.onclick = function () {
+                group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                answers[itemId].value = btn.getAttribute('data-val') === 'true';
+              };
+            });
+          });
+          block.querySelectorAll('[data-checkbox-field]').forEach(function (cb) {
+            var itemId = cb.getAttribute('data-checkbox-field').split('::')[1];
+            cb.addEventListener('change', function () { answers[itemId].value = cb.checked ? true : null; });
+          });
+          block.querySelectorAll('[data-text-field]').forEach(function (ta) {
+            var itemId = ta.getAttribute('data-text-field').split('::')[1];
+            ta.addEventListener('input', function () {
+              var text = ta.value.trim();
+              answers[itemId].value = text ? true : null;
+              answers[itemId].text = text;
+            });
+          });
+          sec.items.forEach(function (it) {
+            var k = keyBase + '::' + it.id;
+            if (it.requires_photo) {
+              var input = document.getElementById('photoInput-' + k);
+              if (input) input.addEventListener('change', function (e) {
+                var file = e.target.files[0];
+                if (!file) return;
+                compressImage(file).then(function (dataUrl) {
+                  answers[it.id].photo = dataUrl;
+                  var img = document.getElementById('preview-' + k);
+                  img.src = dataUrl; img.style.display = 'block';
+                }).catch(function () { alert('Could not process that photo — please try another.'); });
+              });
+            }
+            if (it.requires_date) {
+              var dateInput = document.getElementById('dateInput-' + k);
+              if (dateInput) dateInput.addEventListener('input', function () { answers[it.id].date = dateInput.value || null; });
+            }
+          });
+        }
+
+        function renderSectionEntries(sec, count) {
+          entries[sec.id] = [];
+          for (var i = 0; i < count; i++) entries[sec.id].push(blankAnswers(sec));
+          var container = document.getElementById('entryContainer-' + sec.id);
+          container.innerHTML = entries[sec.id].map(function (_, idx) { return entryBlockHtml(sec, idx); }).join('');
+          entries[sec.id].forEach(function (_, idx) { wireEntryBlock(sec, idx); });
+        }
+
+        tracker.sections.forEach(function (sec) {
+          var sel = wrap.querySelector('[data-section-select="' + sec.id + '"]');
+          if (!sel) return; // section already fully complete — no dropdown rendered
+          sel.addEventListener('change', function () { renderSectionEntries(sec, parseInt(sel.value, 10) || 0); });
         });
+
         document.getElementById('switchCafeBtn').onclick = renderCafePicker;
+
+        document.getElementById('finalSubmitBtn').onclick = function () {
+          var errEl = document.getElementById('formError');
+          errEl.innerHTML = '';
+          var disclaimerConfirmed = document.getElementById('fDisclaimer').checked;
+
+          var toSubmit = []; // { sec, answers }
+          var missing = [];
+          tracker.sections.forEach(function (sec) {
+            (entries[sec.id] || []).forEach(function (answers, idx) {
+              var label = sec.repeatable ? (sec.label + ' — Entry ' + (idx + 1)) : sec.label;
+              sec.items.forEach(function (it) {
+                if (answers[it.id].value === null) missing.push(label + ': ' + it.label);
+                if (it.requires_photo && !answers[it.id].photo) missing.push(label + ': ' + it.label + ' (photo)');
+                if (it.requires_date && !answers[it.id].date) missing.push(label + ': ' + it.label + ' (date)');
+              });
+              toSubmit.push({ sec: sec, answers: answers });
+            });
+          });
+
+          if (!toSubmit.length) { errEl.innerHTML = '<div class="error-msg">Please complete at least one section before submitting.</div>'; return; }
+          if (!disclaimerConfirmed) missing.push('Declaration confirmation');
+          if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
+
+          var btn = document.getElementById('finalSubmitBtn');
+          btn.disabled = true; btn.textContent = 'Submitting…';
+
+          var succeeded = [];
+          var chain = Promise.resolve();
+          toSubmit.forEach(function (entry) {
+            chain = chain.then(function () {
+              var answerArr = entry.sec.items.map(function (it) {
+                return { id: it.id, label: it.label, value: entry.answers[it.id].value, photo: entry.answers[it.id].photo, text: entry.answers[it.id].text || '', date: entry.answers[it.id].date };
+              });
+              return api('/trackers/' + tracker.id + '/submissions', {
+                method: 'POST',
+                body: { cafe: sf.cafe, region: sf.region, submittedBy: sf.submittedBy, sectionId: entry.sec.id, answers: answerArr, disclaimerConfirmed: disclaimerConfirmed },
+              }).then(function () { succeeded.push(entry.sec.label); });
+            });
+          });
+
+          chain.then(function () {
+            renderCombinedForm('<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;margin-bottom:14px;border:1px solid var(--gold);">✓ Submitted: ' + esc(succeeded.join(', ')) + '.</div>');
+          }).catch(function (e) {
+            btn.disabled = false; btn.textContent = 'Submit';
+            var doneNote = succeeded.length ? (' ' + succeeded.length + ' section(s) were saved before this error — they won\'t be resubmitted if you try again.') : '';
+            errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + doneNote + '</div>';
+          });
+        };
       }).catch(function () {
         wrap.innerHTML = '<div class="form-card empty-state">Could not load progress for this café. Please try again.</div>';
       });
-    }
-
-    function renderSectionForm(sec) {
-      var answers = {};
-      sec.items.forEach(function (it) { answers[it.id] = { value: null, photo: null, text: '', date: null }; });
-
-      wrap.innerHTML =
-        '<div class="form-card">' +
-          '<div class="form-title">' + esc(sec.label) + '</div>' +
-          '<div class="form-sub">' + esc(sf.cafe) + ' · ' + esc(sf.submittedBy) + '</div>' +
-          sec.items.map(sharedItemBlockHtml).join('') +
-          '<div class="disclaimer-check"><input type="checkbox" id="fDisclaimer"><span>' + esc(DECLARATION_TEXT) + '</span></div>' +
-          '<div id="formError"></div>' +
-          '<button class="btn gold submit-btn" id="submitSectionBtn">Submit ' + esc(sec.label) + '</button>' +
-          '<button class="btn outline" id="backToHubBtn" style="margin-top:10px;">&larr; Back</button>' +
-        '</div>';
-
-      wrap.querySelectorAll('.toggle-group').forEach(function (group) {
-        var field = group.getAttribute('data-field');
-        group.querySelectorAll('.toggle-btn').forEach(function (btn) {
-          btn.onclick = function () {
-            group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-            btn.classList.add('active');
-            if (answers[field]) answers[field].value = btn.getAttribute('data-val') === 'true';
-          };
-        });
-      });
-      wrap.querySelectorAll('[data-checkbox-field]').forEach(function (cb) {
-        var field = cb.getAttribute('data-checkbox-field');
-        cb.addEventListener('change', function () { if (answers[field]) answers[field].value = cb.checked ? true : null; });
-      });
-      wrap.querySelectorAll('[data-text-field]').forEach(function (ta) {
-        var field = ta.getAttribute('data-text-field');
-        ta.addEventListener('input', function () {
-          var text = ta.value.trim();
-          if (answers[field]) { answers[field].value = text ? true : null; answers[field].text = text; }
-        });
-      });
-      sec.items.forEach(function (it) {
-        if (it.requires_photo) {
-          var input = document.getElementById('photoInput-' + it.id);
-          if (input) input.addEventListener('change', function (e) {
-            var file = e.target.files[0];
-            if (!file) return;
-            compressImage(file).then(function (dataUrl) {
-              answers[it.id].photo = dataUrl;
-              var img = document.getElementById('preview-' + it.id);
-              img.src = dataUrl; img.style.display = 'block';
-            }).catch(function () { alert('Could not process that photo — please try another.'); });
-          });
-        }
-        if (it.requires_date) {
-          var dateInput = document.getElementById('dateInput-' + it.id);
-          if (dateInput) dateInput.addEventListener('input', function () { answers[it.id].date = dateInput.value || null; });
-        }
-      });
-
-      document.getElementById('backToHubBtn').onclick = function () { renderHub(); };
-      document.getElementById('submitSectionBtn').onclick = function () {
-        var errEl = document.getElementById('formError');
-        var disclaimerConfirmed = document.getElementById('fDisclaimer').checked;
-        var missing = [];
-        sec.items.forEach(function (it) {
-          if (answers[it.id].value === null) missing.push(it.label);
-          if (it.requires_date && !answers[it.id].date) missing.push(it.label + ' (date)');
-        });
-        if (!disclaimerConfirmed) missing.push('Declaration confirmation');
-        if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
-
-        var btn = document.getElementById('submitSectionBtn');
-        btn.disabled = true; btn.textContent = 'Submitting…';
-        var answerArr = sec.items.map(function (it) {
-          return { id: it.id, label: it.label, value: answers[it.id].value, photo: answers[it.id].photo, text: answers[it.id].text || '', date: answers[it.id].date };
-        });
-
-        api('/trackers/' + tracker.id + '/submissions', {
-          method: 'POST',
-          body: { cafe: sf.cafe, region: sf.region, submittedBy: sf.submittedBy, sectionId: sec.id, answers: answerArr, disclaimerConfirmed: disclaimerConfirmed },
-        }).then(function () {
-          renderHub('<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;margin-bottom:14px;border:1px solid var(--gold);">✓ ' + esc(sec.label) + ' submitted.</div>');
-        }).catch(function (e) {
-          btn.disabled = false; btn.textContent = 'Submit ' + sec.label;
-          errEl.innerHTML = '<div class="error-msg">' + esc(e.message) + '</div>';
-        });
-      };
     }
 
     renderCafePicker();
@@ -1878,7 +1943,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     function itemBlockHtml(it) {
       var photoBlock = it.requires_photo
         ? '<div class="photo-block" id="photoBlock-' + it.id + '">' +
-            '<div class="ph-label">Photo (optional)</div>' +
+            '<div class="ph-label">Photo</div>' +
             '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + it.id + '"></label>' +
             '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
           '</div>'
@@ -1989,9 +2054,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       var missing = [];
       if (!state.cafe) missing.push('Café name');
       if (!state.submittedBy) missing.push('Submitted by');
-      tracker.checklist_items.forEach(function (it) { if (answers[it.id].value === null) missing.push(it.label); });
+      tracker.checklist_items.forEach(function (it) {
+        if (answers[it.id].value === null) missing.push(it.label);
+        if (it.requires_photo && !answers[it.id].photo) missing.push(it.label + ' (photo)');
+      });
       if (state.conditionalTriggered) {
-        (tracker.conditional.items || []).forEach(function (it) { if (condAnswers[it.id].value === null) missing.push(it.label); });
+        (tracker.conditional.items || []).forEach(function (it) {
+          if (condAnswers[it.id].value === null) missing.push(it.label);
+          if (it.requires_photo && !condAnswers[it.id].photo) missing.push(it.label + ' (photo)');
+        });
       }
       if (!state.disclaimerConfirmed) missing.push('Disclaimer confirmation');
 
