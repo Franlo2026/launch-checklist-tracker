@@ -3,36 +3,45 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
-- **Redesigned submission page for sectioned launches**: instead of a hub with separate pages
-  per section, everything now lives on one page. Each section carries a dropdown ("Skip for
-  now" / "Complete this section", or a count of new entries for repeatable ones like Training
-  Proof) instead of its own submit button — picking a value reveals that section's fields inline.
-- **One declaration, one submit**: per-section declarations and submit buttons are gone. There's
-  a single declaration checkbox and a single Submit button at the bottom of the page, covering
-  whatever sections/entries were filled in.
-- **Partial submission is expected, not blocked**: a café can submit with only some sections
-  filled in — nothing requires every section to be complete in one sitting, matching how the
-  process actually unfolds (they come back to the same link as things progress). The only
-  requirement is that at least one section has been filled in, and that whatever's chosen is
-  fully answered (including its photo/date where required) before that submit goes through.
-- **Photo fields are required, not optional**: the "(optional)" wording next to Photo has been
-  removed everywhere, and photo capture is now enforced by validation on both the sectioned and
-  standard submission pages wherever a checklist item is marked to require one.
-- **Mix-and-match sections**: the template editor offers every Standard, Pre-Launch, and
-  Post-Launch section as an individual "+ Add" button, grouped by category, so you can build a
-  template from whichever sections actually apply.
-- **Archived tab**: the dashboard has Active / Archived tabs (with live counts).
-- **Standard scenario** (the default, no sections added) is completely unchanged — existing
-  trackers keep behaving exactly as before, one flat submission per café.
-- **Branding**: PDF header shows the Bootlegger wordmark only, footers no longer repeat the
-  company name, and the final confirmation tick-box reads: *"I hereby declare that this
-  task/launch/confirmation is 100% accurate and as per the requirements set out."*
+- **Copy Template**: a "Duplicate" button on the Tracker Detail page opens the template editor
+  pre-filled from an existing launch (checklist/sections/café assignments/scenario), as a brand
+  new tracker with fresh section/item ids — rename, tweak, and save without touching the original.
+- **A "Test" café for dry runs**: every submission link now has a "Testing" group in the café
+  dropdown with a single "Test" entry, available regardless of that launch's assigned café list.
+  Submissions from Test never affect submission counts, flagged counts, or Insights — they're
+  filtered out of every reporting aggregation — but stay visible in the tracker's raw submissions
+  list so you can double-check what a test run captured. Test is also exempt from the
+  one-submission-per-café lock on standard trackers, so it can be resubmitted as many times as
+  needed for testing.
+- **Fixed: partial section submissions no longer blocked or duplicated.** Previously, resubmitting
+  a section with some questions still blank was either rejected outright or created a confusing
+  pile-up of "(photo)"/"(date)" validation errors for the same section. Now, submitting a section
+  merges into the most recent incomplete entry — whatever's newly answered is saved, whatever's
+  left blank keeps its previous value (if any) — so a café can leave certain questions unanswered
+  and finish them in a later visit, exactly as the workflow expects. Validation only requires a
+  photo/date for a question that's actually been answered, not for ones left blank.
+- **Fixed: unanswered questions no longer counted as flagged "No" responses** in Insights/PDF —
+  this was a side effect of the same underlying issue and is corrected on both the sectioned and
+  standard reporting paths.
 
-This is a **database-safe update** — it adds new columns (`scenario`, `sections` on trackers;
-`section_id`, `section_label`, `occurrence` on submissions) without touching existing data. The
-old one-submission-per-café uniqueness rule is preserved for every existing/standard tracker;
-it's only relaxed (per section+occurrence) for new sectioned trackers. Just push the code — no
-manual migration needed.
+## Previously shipped
+- **Redesigned submission page for sectioned launches**: everything on one page. Each section
+  carries a dropdown ("Skip for now" / fill it in, or a count of new entries for repeatable ones
+  like Training Proof) instead of its own submit button.
+- **One declaration, one submit** at the bottom of the page, covering whatever was filled in.
+- **Photo fields are required, not optional** — "(optional)" wording removed, enforced by
+  validation wherever a checklist item requires one and has been answered.
+- **Mix-and-match sections**: the template editor offers every Standard, Pre-Launch, and
+  Post-Launch section as an individual "+ Add" button, grouped by category.
+- **Archived tab** on the dashboard (Active / Archived, with live counts).
+- **Standard scenario** (no sections added) is unchanged — one flat submission per café.
+- **Branding**: Bootlegger wordmark only in the PDF header, no repeated company name in footers,
+  and the final declaration reads: *"I hereby declare that this task/launch/confirmation is 100%
+  accurate and as per the requirements set out."*
+
+This is a **database-safe update** — every change is additive (new columns, a replacement unique
+index using the same underlying columns) and nothing here touches or migrates existing data. Just
+push the code.
 
 ### Building a template with mixed sections
 In **+ New Launch Tracker**, under "Add Sections" you'll see three groups — Standard, Pre-Launch,
