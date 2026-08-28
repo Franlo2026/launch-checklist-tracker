@@ -90,11 +90,15 @@ async function initDB() {
   // occurrences of a repeatable section, e.g. 3-4 training evidence entries) through one link.
   // Legacy submissions (section_id NULL, occurrence 1) still collide with each other exactly as
   // before, so old trackers keep their original one-submission-per-café behaviour unchanged.
+  // The reserved "Test" café is explicitly excluded (a partial index) so it can be resubmitted
+  // as many times as needed for dry runs without hitting this constraint.
   try {
     await pool.query(`DROP INDEX IF EXISTS idx_unique_submission_per_cafe;`);
+    await pool.query(`DROP INDEX IF EXISTS idx_unique_submission_per_cafe_section;`);
     await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_submission_per_cafe_section
-      ON submissions (tracker_id, LOWER(TRIM(cafe)), COALESCE(section_id, ''), occurrence);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_submission_per_cafe_section_v2
+      ON submissions (tracker_id, LOWER(TRIM(cafe)), COALESCE(section_id, ''), occurrence)
+      WHERE LOWER(TRIM(cafe)) <> 'test';
     `);
   } catch (err) {
     console.error('Could not create per-section unique index (likely pre-existing duplicate data):', err.message);
@@ -102,6 +106,26 @@ async function initDB() {
 }
 
 const genId = (prefix) => `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
+
+// A reserved café name always available on every submission link (regardless of a tracker's
+// assigned_cafes scoping) so admins/franchise support can dry-run a launch end-to-end without
+// it counting toward real store compliance. Every insights/reporting aggregation excludes it.
+const TEST_CAFE_NAME = 'Test';
+const isTestCafe = (name) => (name || '').trim().toLowerCase() === TEST_CAFE_NAME.toLowerCase();
+
+// True once every item in a section occurrence has a real answer (and its required photo/date,
+// where applicable). Used both to decide whether a repeat submission should MERGE into the most
+// recent occurrence (still incomplete — the café is filling in what they left blank last time)
+// or start a new one, and to report accurate per-café completion in Insights.
+function isSectionOccurrenceComplete(section, answers) {
+  return (section.items || []).every((it) => {
+    const a = (answers || []).find((x) => x.id === it.id);
+    if (!a || a.value === null || a.value === undefined) return false;
+    if (it.requires_photo && !a.photo) return false;
+    if (it.requires_date && !a.date) return false;
+    return true;
+  });
+}
 
 // ---- Legacy café name reconciliation ----
 // Submissions made before the masterfile-based café list existed used names like
@@ -346,6 +370,7 @@ app.get('/api/trackers', requireAuth, async (req, res) => {
             )
           ) AS flagged_count
         FROM submissions
+        WHERE LOWER(TRIM(cafe)) <> 'test'
         GROUP BY tracker_id
       ) s ON s.tracker_id = t.id
       ORDER BY t.created_at DESC;
@@ -402,7 +427,7 @@ app.get('/api/trackers/:id', async (req, res) => {
     const { rows } = await pool.query(`SELECT * FROM launch_trackers WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Tracker not found' });
 
-    const subRes = await pool.query(`SELECT DISTINCT cafe FROM submissions WHERE tracker_id = $1`, [req.params.id]);
+    const subRes = await pool.query(`SELECT DISTINCT cafe FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) <> 'test'`, [req.params.id]);
     const tracker = rows[0];
     tracker.submitted_cafes = subRes.rows.map((r) => r.cafe);
     res.json(tracker);
@@ -458,7 +483,9 @@ app.get('/api/trackers/:id/cafe-progress', async (req, res) => {
     if (!sections.length) return res.json({ sections: [] });
 
     const subsRes = await pool.query(
-      `SELECT section_id, occurrence, submitted_at FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2))`,
+      `SELECT section_id, occurrence, answers, submitted_at FROM submissions
+       WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2))
+       ORDER BY section_id, occurrence ASC`,
       [req.params.id, cafe]
     );
 
@@ -466,7 +493,12 @@ app.get('/api/trackers/:id/cafe-progress', async (req, res) => {
       const rows = subsRes.rows.filter((r) => r.section_id === sec.id);
       const occurrencesSubmitted = rows.map((r) => r.occurrence).sort((a, b) => a - b);
       const count = rows.length;
-      const status = count === 0 ? 'not_started' : (count >= sec.minOccurrences ? 'complete' : 'in_progress');
+      const completeCount = rows.filter((r) => isSectionOccurrenceComplete(sec, r.answers)).length;
+      // The most recently-created occurrence being incomplete means a resubmit to this section
+      // will MERGE into it rather than start a new one — so there's still room to submit even
+      // if the raw row count has already hit maxOccurrences.
+      const latestIncomplete = rows.length > 0 && !isSectionOccurrenceComplete(sec, rows[rows.length - 1].answers);
+      const status = count === 0 ? 'not_started' : (completeCount >= sec.minOccurrences ? 'complete' : 'in_progress');
       return {
         id: sec.id,
         label: sec.label,
@@ -475,9 +507,10 @@ app.get('/api/trackers/:id/cafe-progress', async (req, res) => {
         minOccurrences: sec.minOccurrences,
         maxOccurrences: sec.maxOccurrences,
         submittedCount: count,
+        completeCount,
         occurrencesSubmitted,
         status,
-        canSubmitMore: count < sec.maxOccurrences,
+        canSubmitMore: latestIncomplete || count < sec.maxOccurrences,
       };
     });
 
@@ -529,13 +562,17 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     const tracker = trackerRes.rows[0];
 
     const subsRes = await pool.query(`SELECT * FROM submissions WHERE tracker_id = $1`, [req.params.id]);
-    const submissions = subsRes.rows;
+    // The reserved "Test" café is for dry-running the link end-to-end — it should never affect
+    // real reporting/insights numbers, so it's filtered out before any aggregation below.
+    const submissions = subsRes.rows.filter((s) => !isTestCafe(s.cafe));
     const sections = tracker.sections || [];
 
     // ---- Sectioned trackers: a café only counts as "submitted" once every section has met
-    // its minOccurrences. Compute per-café completion + a per-section item breakdown across
-    // ALL occurrences of that section (so 4 training-proof submissions from one café all feed
-    // into the same section's stats, same as separate cafés would).
+    // its minOccurrences with genuinely COMPLETE occurrences (every item answered, plus any
+    // required photo/date) — a merged-but-still-partial occurrence doesn't count yet. Compute
+    // per-café completion + a per-section item breakdown across ALL occurrences of that section
+    // (so 4 training-proof submissions from one café all feed into the same section's stats,
+    // same as separate cafés would).
     let sectionSummary = null;
     let sectionedSubmittedCafes = null;
     if (sections.length) {
@@ -544,8 +581,8 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
         const rowsForCafe = submissions.filter((s) => s.cafe === cafeName);
         const sectionStatus = sections.map((sec) => {
           const rows = rowsForCafe.filter((r) => r.section_id === sec.id);
-          const count = rows.length;
-          return { id: sec.id, label: sec.label, submittedCount: count, minOccurrences: sec.minOccurrences, complete: count >= sec.minOccurrences };
+          const completeCount = rows.filter((r) => isSectionOccurrenceComplete(sec, r.answers)).length;
+          return { id: sec.id, label: sec.label, submittedCount: rows.length, completeCount, minOccurrences: sec.minOccurrences, complete: completeCount >= sec.minOccurrences };
         });
         const allComplete = sectionStatus.every((s) => s.complete);
         const anyStarted = sectionStatus.some((s) => s.submittedCount > 0);
@@ -560,7 +597,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
           const noEntries = [];
           secSubs.forEach((s) => {
             const match = (s.answers || []).find((a) => a.id === item.id);
-            if (!match) return;
+            if (!match || match.value === null || match.value === undefined) return; // left blank — not a flagged "No", just unanswered so far
             if (match.value === true) yesCount += 1;
             else {
               noCount += 1;
@@ -632,7 +669,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
         relevant.forEach((s) => {
           const ans = getAnswers(s) || [];
           const match = ans.find((a) => a.id === item.id);
-          if (!match) return;
+          if (!match || match.value === null || match.value === undefined) return; // left blank — not a flagged "No"
           if (match.value === true) yesCount += 1;
           else {
             noCount += 1;
@@ -790,25 +827,59 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
     }
 
     // ---- Sectioned trackers (multi-submission: pre-launch/post-launch scenarios etc) ----
-    // Each POST here is ONE section occurrence — a café hits this endpoint 3-4 times for a
-    // repeatable section like Training Proof, and once each for singular sections like Stock
-    // Receipt, Collaterals, POS Update, Online Training. All rows share the same tracker+café
-    // and roll up together in Insights/PDF.
+    // Each POST here is ONE section occurrence — a café hits this endpoint several times for a
+    // repeatable section like Training Proof, and once (or more, see below) for singular
+    // sections like Stock Receipt, Collaterals, POS Update, Online Training. All rows share the
+    // same tracker+café and roll up together in Insights/PDF.
+    //
+    // The workflow expects a café to leave some questions blank and come back later — so if the
+    // most recently-created occurrence for this section is still incomplete (some item unanswered,
+    // or missing a required photo/date), this POST MERGES the new answers into that same row
+    // instead of rejecting it or creating a duplicate: anything newly answered overwrites the old
+    // value, anything left blank this time keeps whatever was already there. Only once that latest
+    // occurrence is genuinely complete does a further submission start a new occurrence (subject
+    // to the section's max).
     if (sections.length) {
       const section = sections.find((s) => s.id === sectionId);
       if (!section) return res.status(400).json({ error: 'Unknown or missing section for this launch' });
 
       const existingForSection = await pool.query(
-        `SELECT occurrence FROM submissions WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2)) AND section_id = $3`,
+        `SELECT id, occurrence, answers FROM submissions
+         WHERE tracker_id = $1 AND LOWER(TRIM(cafe)) = LOWER(TRIM($2)) AND section_id = $3
+         ORDER BY occurrence ASC`,
         [trackerId, cafe, sectionId]
       );
-      const submittedCount = existingForSection.rows.length;
-      if (submittedCount >= section.maxOccurrences) {
+      const rows = existingForSection.rows;
+      const latest = rows.length ? rows[rows.length - 1] : null;
+
+      if (latest && !isSectionOccurrenceComplete(section, latest.answers)) {
+        const oldAnswers = latest.answers || [];
+        const merged = section.items.map((it) => {
+          const oldA = oldAnswers.find((a) => a.id === it.id) || {};
+          const newA = (answers || []).find((a) => a.id === it.id) || {};
+          const hasNewValue = newA.value !== undefined && newA.value !== null;
+          return {
+            id: it.id,
+            label: it.label,
+            value: hasNewValue ? newA.value : (oldA.value !== undefined ? oldA.value : null),
+            photo: newA.photo || oldA.photo || null,
+            text: newA.text || oldA.text || '',
+            date: newA.date || oldA.date || null,
+            comment: oldA.comment || '',
+            actioned: !!oldA.actioned,
+          };
+        });
+        await pool.query(
+          `UPDATE submissions SET answers = $1, submitted_by = $2, disclaimer_confirmed = $3, submitted_at = NOW() WHERE id = $4`,
+          [JSON.stringify(merged), submittedBy, !!disclaimerConfirmed, latest.id]
+        );
+        return res.status(200).json({ id: latest.id, sectionId, occurrence: latest.occurrence, updated: true, maxOccurrences: section.maxOccurrences });
+      }
+
+      if (rows.length >= section.maxOccurrences) {
         return res.status(409).json({ error: `${section.label} already has the maximum of ${section.maxOccurrences} submission(s) for ${cafe}.` });
       }
-      const nextOccurrence = existingForSection.rows.length
-        ? Math.max(...existingForSection.rows.map((r) => r.occurrence)) + 1
-        : 1;
+      const nextOccurrence = rows.length ? Math.max(...rows.map((r) => r.occurrence)) + 1 : 1;
 
       const id = genId('sub');
       await pool.query(
@@ -826,12 +897,16 @@ app.post('/api/trackers/:id/submissions', async (req, res) => {
       return res.status(201).json({ id, sectionId, occurrence: nextOccurrence, maxOccurrences: section.maxOccurrences });
     }
 
-    // ---- Legacy/standard trackers: one flat submission per café, unchanged from before ----
-    const existingRes = await pool.query(`SELECT cafe FROM submissions WHERE tracker_id = $1`, [trackerId]);
-    const targetCanonical = canonicalCafeForm(cafe);
-    const alreadySubmitted = existingRes.rows.some((r) => canonicalCafeForm(r.cafe) === targetCanonical);
-    if (alreadySubmitted) {
-      return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
+    // ---- Legacy/standard trackers: one flat submission per café, unchanged from before —
+    // except for the reserved "Test" café, which is exempt from the one-per-café lock so it can
+    // be used to dry-run this exact link as many times as needed.
+    if (!isTestCafe(cafe)) {
+      const existingRes = await pool.query(`SELECT cafe FROM submissions WHERE tracker_id = $1`, [trackerId]);
+      const targetCanonical = canonicalCafeForm(cafe);
+      const alreadySubmitted = existingRes.rows.some((r) => canonicalCafeForm(r.cafe) === targetCanonical);
+      if (alreadySubmitted) {
+        return res.status(409).json({ error: 'This café has already submitted a confirmation for this launch. Contact your regional manager if this needs to be corrected.' });
+      }
     }
 
     const id = genId('sub');
