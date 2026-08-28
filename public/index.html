@@ -183,6 +183,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     "Limpopo": [{n:"Thabazimbi (C-Store)",f:"XS Petroleum/C-Store"}, {n:"Hoedspruit (C-Store)",f:"XS Petroleum/C-Store"}, {n:"N12 East (C-Store)",f:"XS Petroleum/C-Store"}],
     "Northern Cape": [{n:"Lennox Kimberly (C-Store)",f:"XS Petroleum/C-Store"}, {n:"Springbok (XS)",f:"XS"}],
     "Namibia": [{n:"The Grove",f:"All Day Cafe"}, {n:"Windoek CBD (XS)",f:"XS"}],
+    "Test": [{n:"Test",f:"Test"}],
   };
 
   var FORMAT_OPTIONS = [
@@ -201,8 +202,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   var ALL_CAFE_NAMES = FLAT_STORES.map(function (s) { return s.name; });
 
   function storesByFormat(formatValue) {
-    if (formatValue === 'ALL') return FLAT_STORES.slice();
-    return FLAT_STORES.filter(function (s) { return s.format === formatValue; });
+    // "Test" is a reserved dry-run café, never a real launch assignment — excluded from every
+    // format-based bulk pick, including "All Formats".
+    var real = FLAT_STORES.filter(function (s) { return s.format !== 'Test'; });
+    if (formatValue === 'ALL') return real;
+    return real.filter(function (s) { return s.format === formatValue; });
   }
 
   // ---- Café name resolution (mirrors server-side logic) ----
@@ -1163,6 +1167,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '<div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Submission Link — share with branches, no login required</div>' +
         '<div class="link-row"><input type="text" readonly id="shareLink" value="' + esc(link) + '"><button class="btn outline" id="copyLinkBtn">Copy</button>' +
         '<button class="btn outline" id="editTemplateBtn">Edit Template</button>' +
+        '<button class="btn outline" id="duplicateTemplateBtn">Duplicate</button>' +
         '<button class="btn ' + (tracker.active ? 'outline' : 'gold') + '" id="toggleActiveBtn">' + (tracker.active ? 'Archive' : 'Reactivate') + '</button></div>' +
         '<div style="font-size:10px;color:var(--grey-500);margin-top:8px;">Public form title shown to branches: <strong>' + esc(tracker.form_title) + '</strong></div>' +
       '</div>';
@@ -1182,6 +1187,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       });
     };
     document.getElementById('editTemplateBtn').onclick = function () { openTemplateEditor(tracker); };
+    document.getElementById('duplicateTemplateBtn').onclick = function () { openTemplateEditor(null, tracker); };
     document.getElementById('toggleActiveBtn').onclick = function () {
       api('/trackers/' + tracker.id, { method: 'PATCH', body: { active: !tracker.active } })
         .then(function () { renderTrackerDetail(tracker.id); });
@@ -1231,16 +1237,29 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   }
 
   // ---------------------- TEMPLATE EDITOR (create + edit) ----------------------
-  function openTemplateEditor(existingTracker) {
+  function openTemplateEditor(existingTracker, cloneFrom) {
     var isEdit = !!existingTracker;
-    var data = isEdit
+    var source = existingTracker || cloneFrom;
+    var data = source
       ? JSON.parse(JSON.stringify({
-          name: existingTracker.name, form_title: existingTracker.form_title, description: existingTracker.description,
-          checklist_items: existingTracker.checklist_items, conditional: existingTracker.conditional,
-          assigned_cafes: existingTracker.assigned_cafes || [], exemptions: existingTracker.exemptions || [],
-          scenario: existingTracker.scenario || 'standard', sections: existingTracker.sections || [],
+          name: isEdit ? source.name : ('Copy of ' + source.name),
+          form_title: isEdit ? source.form_title : ('Copy of ' + (source.form_title || source.name)),
+          description: source.description,
+          checklist_items: source.checklist_items, conditional: source.conditional,
+          assigned_cafes: source.assigned_cafes || [], exemptions: source.exemptions || [],
+          scenario: source.scenario || 'standard', sections: source.sections || [],
         }))
       : Object.assign({ name: '', form_title: '', description: '', assigned_cafes: [], exemptions: [], scenario: 'standard', sections: [] }, defaultTemplate());
+
+    // Cloning: give every section and item a fresh id so the new tracker is fully independent
+    // of the one it was copied from — nothing about future submissions/insights on either
+    // tracker ever cross-references the other.
+    if (!isEdit && cloneFrom) {
+      data.sections = (data.sections || []).map(function (sec) {
+        var newItems = (sec.items || []).map(function (it) { return Object.assign({}, it, { id: genId('it') }); });
+        return Object.assign({}, sec, { id: genId('sec'), items: newItems });
+      });
+    }
 
     var backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
@@ -1636,6 +1655,27 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
   var DECLARATION_TEXT = 'I hereby declare that this task/launch/confirmation is 100% accurate and as per the requirements set out.';
 
+  // Builds the grouped <optgroup> café dropdown used by both submission flows. The reserved
+  // "Test" café is always appended in its own group, regardless of whether this tracker's
+  // assigned_cafes scoping would otherwise exclude it — dry-running a link shouldn't require
+  // being added to the real café list.
+  function buildStoreOptionsHtml(scoped) {
+    var byRegion = {};
+    scoped.forEach(function (s) {
+      if (isTestCafeName(s.name)) return; // avoid duplicating it if it was somehow already in scope
+      var region = s.region || 'OTHER';
+      if (!byRegion[region]) byRegion[region] = [];
+      byRegion[region].push(s.name);
+    });
+    var html = '<option value="">Select your café…</option>' +
+      Object.keys(byRegion).map(function (region) {
+        return '<optgroup label="' + esc(region) + '">' + byRegion[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>';
+      }).join('');
+    html += '<optgroup label="Testing"><option value="Test">Test (dry run — not counted in reporting)</option></optgroup>';
+    return html;
+  }
+  function isTestCafeName(name) { return (name || '').trim().toLowerCase() === 'test'; }
+
   // Shared item-block renderer used by both the legacy flat form and the sectioned flow.
   // keyPrefix namespaces every element id/data-field so the same item can be rendered more than
   // once on the page at once (e.g. Entry 1 / Entry 2 of a repeatable section) without id clashes;
@@ -1678,16 +1718,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     var wrap = document.getElementById('formWrap');
 
     function renderCafePicker() {
-      var byRegion = {};
-      scoped.forEach(function (s) {
-        var region = s.region || 'OTHER';
-        if (!byRegion[region]) byRegion[region] = [];
-        byRegion[region].push(s.name);
-      });
-      var storeOptions = '<option value="">Select your café…</option>' +
-        Object.keys(byRegion).map(function (region) {
-          return '<optgroup label="' + esc(region) + '">' + byRegion[region].map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>';
-        }).join('');
+      var storeOptions = buildStoreOptionsHtml(scoped);
 
       wrap.innerHTML =
         '<div class="form-card">' +
@@ -1742,29 +1773,40 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         }
 
         function sectionCardHtml(sec) {
-          var progress = progressById[sec.id] || { canSubmitMore: true, submittedCount: 0, maxOccurrences: sec.maxOccurrences, status: 'not_started' };
+          var progress = progressById[sec.id] || { canSubmitMore: true, submittedCount: 0, completeCount: 0, maxOccurrences: sec.maxOccurrences, status: 'not_started' };
           if (!progress.canSubmitMore) {
             return '<div class="check-row" style="align-items:center;">' +
               '<span class="label" style="flex:1;">' + esc(sec.label) + '</span>' +
-              '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold);">✓ Complete' + (sec.repeatable ? ' (' + progress.submittedCount + '/' + progress.maxOccurrences + ')' : '') + '</span>' +
+              '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold);">✓ Complete' + (sec.repeatable ? ' (' + progress.completeCount + '/' + progress.maxOccurrences + ')' : '') + '</span>' +
             '</div>';
           }
 
-          var remaining = sec.repeatable ? (progress.maxOccurrences - progress.submittedCount) : 1;
+          // Capacity is based on COMPLETE entries, not raw submission count — an incomplete entry
+          // from a previous visit doesn't use up a slot, it just gets filled in further (merged)
+          // the next time this section is submitted.
+          var remaining = sec.repeatable ? Math.max(1, progress.maxOccurrences - progress.completeCount) : 1;
           var dropdownOptions;
           if (sec.repeatable) {
             var opts = ['<option value="0">Skip for now</option>'];
             for (var n = 1; n <= remaining; n++) opts.push('<option value="' + n + '">Add ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + '</option>');
             dropdownOptions = opts.join('');
           } else {
-            dropdownOptions = '<option value="0">Skip for now</option><option value="1">Complete this section</option>';
+            dropdownOptions = '<option value="0">Skip for now</option><option value="1">Fill in this section</option>';
+          }
+
+          var progressNote = '';
+          if (progress.submittedCount > 0) {
+            progressNote = progress.completeCount === progress.submittedCount
+              ? ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' complete)</span>'
+              : ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' complete, 1 in progress)</span>';
           }
 
           return '<div style="border-top:1px solid var(--grey-200);padding-top:14px;margin-top:14px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
-              '<span class="label" style="font-weight:700;">' + esc(sec.label) + (progress.submittedCount > 0 ? ' <span class="hint" style="display:inline;">(' + progress.submittedCount + ' submitted so far)</span>' : '') + '</span>' +
+              '<span class="label" style="font-weight:700;">' + esc(sec.label) + progressNote + '</span>' +
               '<select data-section-select="' + sec.id + '" style="padding:8px 10px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + dropdownOptions + '</select>' +
             '</div>' +
+            '<div class="hint" style="margin-top:4px;">You can leave questions in this section blank and come back to finish them in a later submission.</div>' +
             '<div id="entryContainer-' + sec.id + '"></div>' +
           '</div>';
         }
@@ -1862,11 +1904,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           tracker.sections.forEach(function (sec) {
             (entries[sec.id] || []).forEach(function (answers, idx) {
               var label = sec.repeatable ? (sec.label + ' — Entry ' + (idx + 1)) : sec.label;
+              var anyAnswered = false;
               sec.items.forEach(function (it) {
-                if (answers[it.id].value === null) missing.push(label + ': ' + it.label);
-                if (it.requires_photo && !answers[it.id].photo) missing.push(label + ': ' + it.label + ' (photo)');
-                if (it.requires_date && !answers[it.id].date) missing.push(label + ': ' + it.label + ' (date)');
+                var ans = answers[it.id];
+                if (ans.value === null) return; // leaving a question blank is fine — it can be finished in a later submission
+                anyAnswered = true;
+                if (it.requires_photo && !ans.photo) missing.push(label + ': ' + it.label + ' (photo)');
+                if (it.requires_date && !ans.date) missing.push(label + ': ' + it.label + ' (date)');
               });
+              if (!anyAnswered) missing.push(label + ': answer at least one question, or set it back to "Skip for now"');
               toSubmit.push({ sec: sec, answers: answers });
             });
           });
@@ -1922,6 +1968,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     var submittedNorm = (tracker.submitted_cafes || []).map(function (c) { return c.trim().toLowerCase(); });
     var byRegion = {};
     scoped.forEach(function (s) {
+      if (isTestCafeName(s.name)) return; // rendered separately in its own "Testing" group below
       var region = s.region || 'OTHER';
       if (!byRegion[region]) byRegion[region] = [];
       byRegion[region].push(s.name);
@@ -1934,7 +1981,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             return '<option value="' + esc(n) + '"' + (already ? ' disabled' : '') + '>' + esc(n) + (already ? ' — Already Submitted' : '') + '</option>';
           }).join('') +
           '</optgroup>';
-      }).join('');
+      }).join('') +
+      '<optgroup label="Testing"><option value="Test">Test (dry run — not counted in reporting)</option></optgroup>';
 
     function cafeAlreadySubmitted(name) {
       return submittedNorm.indexOf((name || '').trim().toLowerCase()) !== -1;
