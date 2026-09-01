@@ -819,10 +819,14 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       }
 
       document.getElementById('insightBody').innerHTML = summaryHtml + summaryFooterHtml + missingHtml + exemptHtml + sectionsHtml +
-        questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
-        questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
-        textResponsesBlock('Checklist Comment Responses', d.textResponses) +
-        textResponsesBlock('Conditional Comment Responses', d.textResponsesConditional) +
+        // The flat checklist/conditional breakdown only applies to standard (non-sectioned)
+        // trackers — a sectioned tracker's submission form never shows these questions, so
+        // they're skipped entirely here even if older stored data happens to still have them.
+        (d.sections ? '' :
+          questionBlock('Checklist Question Breakdown', d.questionBreakdown, false) +
+          questionBlock('Conditional Section Breakdown', d.conditionalBreakdown, true) +
+          textResponsesBlock('Checklist Comment Responses', d.textResponses) +
+          textResponsesBlock('Conditional Comment Responses', d.textResponsesConditional)) +
         photoGalleryBlock((d.photoSubmissions || []).concat(sectionPhotos));
 
       document.getElementById('insightBody').querySelectorAll('[id^="photo-gal-"]').forEach(function (img) {
@@ -1062,8 +1066,13 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         pdfTextResponseSection(sec.label + ' — Comments', sec.textResponses || []);
       });
     }
-    pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
-    pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
+    // Flat checklist/conditional breakdown only applies to standard (non-sectioned) trackers —
+    // skip it entirely for a sectioned tracker so the PDF never shows questions that were never
+    // actually part of that launch's submission form.
+    if (!d.sections) {
+      pdfQuestionSection('Checklist Question Breakdown', d.questionBreakdown);
+      pdfQuestionSection('Conditional Section Breakdown', d.conditionalBreakdown);
+    }
 
     function pdfTextResponseSection(title, items) {
       if (!items || !items.length) return;
@@ -1089,8 +1098,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         y += (qi < withResponses.length - 1 ? 6 : 14);
       });
     }
-    pdfTextResponseSection('Checklist Comment Responses', d.textResponses);
-    pdfTextResponseSection('Conditional Comment Responses', d.textResponsesConditional);
+    if (!d.sections) {
+      pdfTextResponseSection('Checklist Comment Responses', d.textResponses);
+      pdfTextResponseSection('Conditional Comment Responses', d.textResponsesConditional);
+    }
 
     if (d.photoSubmissions && d.photoSubmissions.length) {
       sectionTitle('Submitted Photos (' + d.photoSubmissions.length + ')');
@@ -1271,21 +1282,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       '<div class="field"><label>Description (optional)</label><input type="text" id="teDesc" value="' + esc(data.description || '') + '"></div>' +
 
       '<div class="editor-section-title">Add Sections</div>' +
-      '<div class="hint" style="margin-bottom:10px;">Add any section that applies to this launch — mix and match from Standard, Pre-Launch, and Post-Launch as needed. Each is added as its own editable copy; repeatable ones (like Training Proof) can be submitted more than once through the same link.</div>' +
-      '<div id="sectionLibrary">' +
-        Object.keys(SECTION_LIBRARY).map(function (catKey) {
-          var cat = SECTION_LIBRARY[catKey];
-          return '<div style="margin-bottom:10px;">' +
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--grey-500);margin-bottom:6px;">' + esc(cat.label) + '</div>' +
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-              cat.sections.map(function (s) {
-                return '<button type="button" class="btn outline small" data-lib-cat="' + catKey + '" data-lib-key="' + s.key + '">+ ' + esc(s.label) + '</button>';
-              }).join('') +
-            '</div>' +
-          '</div>';
-        }).join('') +
-      '</div>' +
+      '<div class="hint" style="margin-bottom:10px;">Add any section that applies to this launch — mix and match from Standard, Pre-Launch, and Post-Launch as needed. Click again to remove one. Each is added as its own editable copy; repeatable ones (like Training Proof) can be submitted more than once through the same link.</div>' +
+      '<div id="sectionLibrary"></div>' +
       '<div style="margin-bottom:16px;"></div>' +
+
 
       '<div id="unscopedFlagBanner"></div>' +
 
@@ -1486,19 +1486,50 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       };
     });
 
-    // ---- Section library quick-add: mix and match presets from any category ----
-    document.getElementById('sectionLibrary').querySelectorAll('button[data-lib-key]').forEach(function (btn) {
-      btn.onclick = function () {
-        var catKey = btn.getAttribute('data-lib-cat');
-        var key = btn.getAttribute('data-lib-key');
-        var preset = SECTION_LIBRARY[catKey].sections.find(function (s) { return s.key === key; });
-        if (!preset) return;
-        data.sections.push(preset.build());
-        document.getElementById('flatChecklistBlock').style.display = 'none';
-        document.getElementById('sectionsBlock').style.display = 'block';
-        renderSections();
-      };
-    });
+    // ---- Section library: toggleable quick-add/remove, mixing presets from any category ----
+    // A preset shows as "+ Add X" when not yet in this template, or "− Remove X" once it is —
+    // matched by the preset's `type`, since a freshly-added copy gets a brand new section id.
+    function renderSectionLibrary() {
+      var el = document.getElementById('sectionLibrary');
+      el.innerHTML = Object.keys(SECTION_LIBRARY).map(function (catKey) {
+        var cat = SECTION_LIBRARY[catKey];
+        return '<div style="margin-bottom:10px;">' +
+          '<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--grey-500);margin-bottom:6px;">' + esc(cat.label) + '</div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+            cat.sections.map(function (s) {
+              var present = data.sections.some(function (sec) { return sec.type === s.key; });
+              return '<button type="button" class="btn ' + (present ? 'gold' : 'outline') + ' small" data-lib-cat="' + catKey + '" data-lib-key="' + s.key + '">' +
+                (present ? '− Remove ' : '+ Add ') + esc(s.label) + '</button>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      el.querySelectorAll('button[data-lib-key]').forEach(function (btn) {
+        btn.onclick = function () {
+          var catKey = btn.getAttribute('data-lib-cat');
+          var key = btn.getAttribute('data-lib-key');
+          var preset = SECTION_LIBRARY[catKey].sections.find(function (s) { return s.key === key; });
+          if (!preset) return;
+          var existingIdx = data.sections.findIndex(function (sec) { return sec.type === key; });
+          if (existingIdx !== -1) {
+            data.sections.splice(existingIdx, 1);
+          } else {
+            data.sections.push(preset.build());
+          }
+          if (data.sections.length) {
+            document.getElementById('flatChecklistBlock').style.display = 'none';
+            document.getElementById('sectionsBlock').style.display = 'block';
+          } else {
+            document.getElementById('flatChecklistBlock').style.display = 'block';
+            document.getElementById('sectionsBlock').style.display = 'none';
+          }
+          renderSectionLibrary();
+          renderSections();
+        };
+      });
+    }
+    renderSectionLibrary();
 
     // ---- Sections builder ----
     function renderSections() {
@@ -1546,6 +1577,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             document.getElementById('flatChecklistBlock').style.display = 'block';
             document.getElementById('sectionsBlock').style.display = 'none';
           }
+          renderSectionLibrary();
           renderSections();
         });
       });
@@ -1620,7 +1652,13 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       }
 
       var payload = {
-        name: name, formTitle: formTitle, description: desc, checklistItems: data.checklist_items, conditional: data.conditional,
+        name: name, formTitle: formTitle, description: desc,
+        // A tracker uses EITHER the flat checklist OR sections, never both — when sections are
+        // in use, the checklist/conditional fields are cleared so no leftover default content
+        // (from the editor's starting template) ends up stored and later surfacing in Insights
+        // or the PDF as a "question" that was never actually shown on the submission form.
+        checklistItems: usingSections ? [] : data.checklist_items,
+        conditional: usingSections ? { enabled: false, trigger_label: '', items: [] } : data.conditional,
         assignedCafes: data.assigned_cafes, exemptions: data.exemptions,
         scenario: deriveScenario(usingSections ? data.sections : []), sections: usingSections ? data.sections : [],
       };
@@ -1685,7 +1723,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
     var photoBlock = it.requires_photo
       ? '<div class="photo-block" id="photoBlock-' + k + '">' +
           '<div class="ph-label">Photo</div>' +
-          '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + k + '"></label>' +
+          '<label class="file-btn-label">Take Photo or Choose from Library<input type="file" accept="image/*" id="photoInput-' + k + '"></label>' +
           '<img class="photo-preview" id="preview-' + k + '" style="display:none;">' +
         '</div>'
       : '';
@@ -1992,7 +2030,7 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
       var photoBlock = it.requires_photo
         ? '<div class="photo-block" id="photoBlock-' + it.id + '">' +
             '<div class="ph-label">Photo</div>' +
-            '<label class="file-btn-label">Choose / Take Photo<input type="file" accept="image/*" capture="environment" id="photoInput-' + it.id + '"></label>' +
+            '<label class="file-btn-label">Take Photo or Choose from Library<input type="file" accept="image/*" id="photoInput-' + it.id + '"></label>' +
             '<img class="photo-preview" id="preview-' + it.id + '" style="display:none;">' +
           '</div>'
         : '';
