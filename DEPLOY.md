@@ -3,45 +3,41 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
-- **Copy Template**: a "Duplicate" button on the Tracker Detail page opens the template editor
-  pre-filled from an existing launch (checklist/sections/café assignments/scenario), as a brand
-  new tracker with fresh section/item ids — rename, tweak, and save without touching the original.
-- **A "Test" café for dry runs**: every submission link now has a "Testing" group in the café
-  dropdown with a single "Test" entry, available regardless of that launch's assigned café list.
-  Submissions from Test never affect submission counts, flagged counts, or Insights — they're
-  filtered out of every reporting aggregation — but stay visible in the tracker's raw submissions
-  list so you can double-check what a test run captured. Test is also exempt from the
-  one-submission-per-café lock on standard trackers, so it can be resubmitted as many times as
-  needed for testing.
-- **Fixed: partial section submissions no longer blocked or duplicated.** Previously, resubmitting
-  a section with some questions still blank was either rejected outright or created a confusing
-  pile-up of "(photo)"/"(date)" validation errors for the same section. Now, submitting a section
-  merges into the most recent incomplete entry — whatever's newly answered is saved, whatever's
-  left blank keeps its previous value (if any) — so a café can leave certain questions unanswered
-  and finish them in a later visit, exactly as the workflow expects. Validation only requires a
-  photo/date for a question that's actually been answered, not for ones left blank.
-- **Fixed: unanswered questions no longer counted as flagged "No" responses** in Insights/PDF —
-  this was a side effect of the same underlying issue and is corrected on both the sectioned and
-  standard reporting paths.
+- **Photo capture now offers both camera and library**: removed a restriction that forced
+  mobile browsers into camera-only mode for every photo field — tapping "Take Photo or Choose
+  from Library" now brings up the normal device picker with both options, on every submission
+  page.
+- **Fixed: Insights and the PDF no longer show irrelevant questions/sections.** Found and fixed
+  the root cause — every new tracker's editor started pre-loaded with 4 default checklist
+  questions and a 2-item conditional section (leftover from before sections existed), and if an
+  admin built a Pre-Launch/Post-Launch/mixed template without ever touching that hidden flat
+  block, its default content was still being saved alongside the real sections. Insights and the
+  PDF would then show a "Checklist Question Breakdown" and "Conditional Section Breakdown" full
+  of questions that were never actually part of that launch's submission form. Fixed at the
+  source (a sectioned tracker's checklist/conditional now save empty) and defensively in
+  Insights/PDF (they skip those blocks entirely for any sectioned tracker) — the defensive half
+  means this is retroactively fixed for every tracker already created, no data cleanup needed.
+- **+ / − toggle on the "Add Sections" palette**: each preset button now reflects whether it's
+  already in the template — "+ Add X" when it isn't, "− Remove X" (highlighted) once it is —
+  so adding or removing a section no longer requires scrolling down to the section list.
 
 ## Previously shipped
-- **Redesigned submission page for sectioned launches**: everything on one page. Each section
-  carries a dropdown ("Skip for now" / fill it in, or a count of new entries for repeatable ones
-  like Training Proof) instead of its own submit button.
-- **One declaration, one submit** at the bottom of the page, covering whatever was filled in.
-- **Photo fields are required, not optional** — "(optional)" wording removed, enforced by
-  validation wherever a checklist item requires one and has been answered.
-- **Mix-and-match sections**: the template editor offers every Standard, Pre-Launch, and
-  Post-Launch section as an individual "+ Add" button, grouped by category.
-- **Archived tab** on the dashboard (Active / Archived, with live counts).
-- **Standard scenario** (no sections added) is unchanged — one flat submission per café.
-- **Branding**: Bootlegger wordmark only in the PDF header, no repeated company name in footers,
-  and the final declaration reads: *"I hereby declare that this task/launch/confirmation is 100%
-  accurate and as per the requirements set out."*
+- **Copy Template**: a "Duplicate" button on the Tracker Detail page opens the editor pre-filled
+  from an existing launch, as a brand new tracker with fresh section/item ids.
+- **A "Test" café for dry runs**, always available regardless of a launch's café scoping, excluded
+  from every reporting number but still visible in the raw submissions list, and exempt from the
+  one-submission-per-café lock.
+- **Partial section submissions**: resubmitting a section with some questions still blank merges
+  into the most recent incomplete entry instead of rejecting or duplicating it — a café can leave
+  questions unanswered and finish them on a later visit.
+- **Redesigned submission page for sectioned launches**: everything on one page, a dropdown per
+  section instead of a submit button, one declaration + one submit at the bottom.
+- **Mix-and-match sections**, **Archived tab**, and the **Bootlegger-wordmark-only branding** with
+  the updated declaration text.
 
-This is a **database-safe update** — every change is additive (new columns, a replacement unique
-index using the same underlying columns) and nothing here touches or migrates existing data. Just
-push the code.
+This is a **database-safe update** — every change here is either purely client-side (photo
+picker, +/− toggle) or a display-layer fix (Insights/PDF gating); nothing touches the database
+schema or existing data. Just push the code.
 
 ### Building a template with mixed sections
 In **+ New Launch Tracker**, under "Add Sections" you'll see three groups — Standard, Pre-Launch,
