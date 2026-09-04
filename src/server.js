@@ -573,8 +573,29 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     // per-café completion + a per-section item breakdown across ALL occurrences of that section
     // (so 4 training-proof submissions from one café all feed into the same section's stats,
     // same as separate cafés would).
+    // Exemptions/assignment scope don't depend on sections, and the café×task matrix below needs
+    // both — compute them up front so they're available inside the sections block.
+    const exemptions = tracker.exemptions || [];
+    const exemptCafeNames = exemptions.map((e) => e.cafe);
+    // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
+    const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
+    const assignedNames = assigned ? assigned.map((c) => c.name || c) : null;
+    const exemptMatchedAssignedNames = new Set();
+    if (assignedNames) {
+      exemptCafeNames.forEach((name) => {
+        const match = resolveCafeMatch(name, assignedNames);
+        if (match) exemptMatchedAssignedNames.add(match);
+      });
+    }
+
     let sectionSummary = null;
     let sectionedSubmittedCafes = null;
+    // Per-café x per-task breakdown for multi-step (sectioned) launches — lets a franchise/ops
+    // manager see exactly which cafés still owe which specific task, instead of only reading
+    // aggregate "X café(s) started" counts per section. Every assigned café gets a row (even one
+    // that never submitted anything), sorted worst-outstanding-first so the cafés needing the
+    // most follow-up surface at the top. null for legacy/standard (non-sectioned) trackers.
+    let cafeTaskMatrix = null;
     if (sections.length) {
       const cafesTouched = Array.from(new Set(submissions.map((s) => s.cafe)));
       const perCafe = cafesTouched.map((cafeName) => {
@@ -622,21 +643,64 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
           itemBreakdown, textResponses: textItems,
         };
       });
+
+      // ---- Café x Task matrix ----
+      // Base row list is the assigned café list when this launch was scoped (so a café that never
+      // touched the form still gets a full "not started" row and isn't invisible), otherwise every
+      // café that submitted anything. Exempt cafés get their own status rather than counting as
+      // outstanding.
+      const matrixBaseNames = assignedNames || cafesTouched;
+      cafeTaskMatrix = matrixBaseNames.map((name) => {
+        const isExempt = assignedNames
+          ? exemptMatchedAssignedNames.has(name)
+          : exemptCafeNames.some((e) => (e || '').trim().toLowerCase() === name.trim().toLowerCase());
+        if (isExempt) {
+          const exemptEntry = exemptions.find((e) => (assignedNames ? resolveCafeMatch(e.cafe, assignedNames) === name : (e.cafe || '').trim().toLowerCase() === name.trim().toLowerCase()));
+          return {
+            cafe: name,
+            status: 'exempt',
+            exemptReason: exemptEntry ? exemptEntry.reason : '',
+            outstandingCount: 0,
+            sections: sections.map((sec) => ({ id: sec.id, label: sec.label, status: 'exempt', submittedCount: 0, completeCount: 0, minOccurrences: sec.minOccurrences })),
+          };
+        }
+        const row = assignedNames
+          ? perCafe.find((c) => resolveCafeMatch(c.cafe, [name]) === name)
+          : perCafe.find((c) => c.cafe === name);
+        if (!row) {
+          return {
+            cafe: name,
+            status: 'not_started',
+            outstandingCount: sections.length,
+            sections: sections.map((sec) => ({ id: sec.id, label: sec.label, status: 'not_started', submittedCount: 0, completeCount: 0, minOccurrences: sec.minOccurrences })),
+          };
+        }
+        const secStatuses = row.sections.map((s) => ({
+          id: s.id,
+          label: s.label,
+          status: s.complete ? 'complete' : (s.submittedCount > 0 ? 'in_progress' : 'not_started'),
+          submittedCount: s.submittedCount,
+          completeCount: s.completeCount,
+          minOccurrences: s.minOccurrences,
+        }));
+        return {
+          cafe: name,
+          status: row.status,
+          outstandingCount: secStatuses.filter((s) => s.status !== 'complete').length,
+          sections: secStatuses,
+        };
+      });
+
+      // Cafés needing the most follow-up surface first; fully complete/exempt cafés sink to the bottom.
+      cafeTaskMatrix.sort((a, b) => b.outstandingCount - a.outstandingCount || a.cafe.localeCompare(b.cafe));
     }
 
     const submittedCafes = sections.length ? sectionedSubmittedCafes : Array.from(new Set(submissions.map((s) => s.cafe)));
-    const exemptions = tracker.exemptions || [];
-    const exemptCafeNames = exemptions.map((e) => e.cafe);
-
-    // assigned_cafes empty = scope was "all stores" (also true for trackers created before this feature existed)
-    const assigned = (tracker.assigned_cafes && tracker.assigned_cafes.length) ? tracker.assigned_cafes : null;
 
     let missingCafes = [];
     let submittedInScope = submittedCafes;
     let unscopedSubmittedCafes = [];
     if (assigned) {
-      const assignedNames = assigned.map((c) => c.name || c);
-
       // Only count a submission toward "Submitted" if its café matches the assigned list —
       // matching goes through resolveCafeMatch so a legacy name (e.g. "Salt River (XS)") still
       // correctly matches the current name ("Salt River") instead of inflating "Submitted"
@@ -651,12 +715,6 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
         return match !== null;
       });
       unscopedSubmittedCafes = submittedCafes.filter((name) => resolveCafeMatch(name, assignedNames) === null);
-
-      const exemptMatchedAssignedNames = new Set();
-      exemptCafeNames.forEach((name) => {
-        const match = resolveCafeMatch(name, assignedNames);
-        if (match) exemptMatchedAssignedNames.add(match);
-      });
 
       missingCafes = assignedNames.filter((name) => !matchedAssignedNames.has(name) && !exemptMatchedAssignedNames.has(name));
     }
@@ -758,6 +816,7 @@ app.get('/api/trackers/:id/insights', requireAuth, async (req, res) => {
     res.json({
       tracker: { id: tracker.id, name: tracker.name, form_title: tracker.form_title, scenario: tracker.scenario },
       sections: sectionSummary, // null for legacy/standard trackers; array of per-section stats otherwise
+      cafeTaskMatrix, // null for legacy/standard trackers; per-café x per-section status otherwise, worst-outstanding-first
       totalAssigned: assigned ? assigned.length : null,
       totalSubmitted: assigned ? submittedInScope.length : submittedCafes.length,
       totalExempted: exemptions.length,
