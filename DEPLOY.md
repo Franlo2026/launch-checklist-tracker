@@ -3,6 +3,17 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
+- **Café × Task Status matrix in Insights (multi-step launches)**: for any launch built from
+  sections (Training Proof, B.Better, Collateral, GAAP POS, etc.), Insights now shows a grid with
+  every assigned café down the side and every task across the top — a coloured dot per cell
+  (complete / in progress / not started / exempt) shows exactly what each café still owes, instead
+  of only the aggregate "X café(s) started" count per section. A café that never touched the form
+  still gets a full row so it's never invisible. Search-by-café and a "show outstanding only"
+  toggle (on by default) keep it usable at 70+ cafés; rows are sorted with the most outstanding
+  items first so the cafés needing the most follow-up are always at the top. The PDF export gets
+  the same data condensed into an "Outstanding by Café" list — only cafés with something still
+  owed, each with the specific task(s) still missing — so the printed report is directly
+  actionable rather than just aggregate stats.
 - **Photo capture now offers both camera and library**: removed a restriction that forced
   mobile browsers into camera-only mode for every photo field — tapping "Take Photo or Choose
   from Library" now brings up the normal device picker with both options, on every submission
@@ -36,8 +47,9 @@ Same GitHub → Railway workflow you already use for the Ops Task Tracker.
   the updated declaration text.
 
 This is a **database-safe update** — every change here is either purely client-side (photo
-picker, +/− toggle) or a display-layer fix (Insights/PDF gating); nothing touches the database
-schema or existing data. Just push the code.
+picker, +/− toggle), a display-layer fix (Insights/PDF gating), or a new *computed* field added to
+the existing Insights API response (the café × task matrix — derived from data already stored,
+nothing new to migrate). Nothing touches the database schema or existing data. Just push the code.
 
 ### Building a template with mixed sections
 In **+ New Launch Tracker**, under "Add Sections" you'll see three groups — Standard, Pre-Launch,
