@@ -2015,6 +2015,11 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         progressData.sections.forEach(function (p) { progressById[p.id] = p; });
 
         var allDone = progressData.sections.every(function (s) { return s.status === 'complete'; });
+        var totalSections = progressData.sections.length;
+        var completeSections = progressData.sections.filter(function (s) { return s.status === 'complete'; }).length;
+        var dueLabels = tracker.sections
+          .filter(function (sec) { var p = progressById[sec.id]; return !p || p.status !== 'complete'; })
+          .map(function (sec) { return sec.label; });
 
         // entries[secId] = array of { itemId: {value,photo,text,date} } objects, one per NEW
         // entry the café is filling in right now. Non-repeatable sections have at most 1.
@@ -2035,12 +2040,38 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           '</div>';
         }
 
+        function buildExtraOptions(remaining) {
+          var opts = ['<option value="0">No, that\'s enough</option>'];
+          for (var n = 1; n <= remaining; n++) opts.push('<option value="' + n + '">Add ' + n + ' more entr' + (n === 1 ? 'y' : 'ies') + '</option>');
+          return opts.join('');
+        }
+
         function sectionCardHtml(sec) {
-          var progress = progressById[sec.id] || { canSubmitMore: true, submittedCount: 0, completeCount: 0, maxOccurrences: sec.maxOccurrences, status: 'not_started' };
-          if (!progress.canSubmitMore) {
-            return '<div class="check-row" style="align-items:center;">' +
-              '<span class="label" style="flex:1;">' + esc(sec.label) + '</span>' +
-              '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold);">✓ Complete' + (sec.repeatable ? ' (' + progress.completeCount + '/' + progress.maxOccurrences + ')' : '') + '</span>' +
+          var progress = progressById[sec.id] || { canSubmitMore: true, submittedCount: 0, completeCount: 0, maxOccurrences: sec.maxOccurrences, minOccurrences: sec.minOccurrences, status: 'not_started' };
+
+          // A section counts as done the moment it hits its required minimum — this must be
+          // checked BEFORE canSubmitMore, because a repeatable section that met its minimum but
+          // still has room up to its maximum (e.g. Training Proof: min 3, max 4, café submitted
+          // exactly 3) has canSubmitMore=true even though nothing further is required. Treating
+          // canSubmitMore as "still needs this section" was the actual bug behind not being able
+          // to reach final submission — it kept a mandatory-looking dropdown on screen (and kept
+          // entries[] empty, since nobody fills in an "optional extra" they don't know is
+          // optional) for a section that had genuinely already met its requirement.
+          if (progress.status === 'complete') {
+            var canAddExtra = sec.repeatable && progress.canSubmitMore;
+            var extraRemaining = canAddExtra ? Math.max(0, progress.maxOccurrences - progress.completeCount) : 0;
+            return '<div style="border-top:1px solid var(--grey-200);padding-top:14px;margin-top:14px;">' +
+              '<div class="check-row" style="align-items:center;flex-wrap:wrap;">' +
+                '<span class="label" style="flex:1;">' + esc(sec.label) + '</span>' +
+                '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold);">✓ Complete' + (sec.repeatable ? ' (' + progress.completeCount + '/' + progress.minOccurrences + ' required)' : '') + '</span>' +
+              '</div>' +
+              (canAddExtra
+                ? '<button type="button" class="btn outline small" data-add-extra="' + sec.id + '" style="margin-top:8px;">+ Add another entry (optional — up to ' + extraRemaining + ' more)</button>' +
+                  '<div id="extraWrap-' + sec.id + '" style="display:none;margin-top:10px;">' +
+                    '<select data-section-select="' + sec.id + '" style="padding:8px 10px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + buildExtraOptions(extraRemaining) + '</select>' +
+                    '<div id="entryContainer-' + sec.id + '"></div>' +
+                  '</div>'
+                : '') +
             '</div>';
           }
 
@@ -2060,13 +2091,14 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
           var progressNote = '';
           if (progress.submittedCount > 0) {
             progressNote = progress.completeCount === progress.submittedCount
-              ? ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' complete)</span>'
-              : ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' complete, 1 in progress)</span>';
+              ? ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' of ' + progress.minOccurrences + ' complete)</span>'
+              : ' <span class="hint" style="display:inline;">(' + progress.completeCount + ' of ' + progress.minOccurrences + ' complete, 1 in progress)</span>';
           }
 
           return '<div style="border-top:1px solid var(--grey-200);padding-top:14px;margin-top:14px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
               '<span class="label" style="font-weight:700;">' + esc(sec.label) + progressNote + '</span>' +
+              '<span style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--red-flag);">Still Due</span>' +
               '<select data-section-select="' + sec.id + '" style="padding:8px 10px;border:1px solid var(--grey-300);font-family:var(--font);font-size:12px;">' + dropdownOptions + '</select>' +
             '</div>' +
             '<div class="hint" style="margin-top:4px;">You can leave questions in this section blank and come back to finish them in a later submission.</div>' +
@@ -2079,6 +2111,10 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             (bannerHtml || '') +
             '<div class="form-title">' + esc(tracker.form_title) + '</div>' +
             '<div class="form-sub">' + esc(sf.cafe) + ' · ' + esc(sf.submittedBy) + '</div>' +
+            '<div class="hint" style="background:var(--grey-100);padding:10px 12px;margin-bottom:14px;border:1px solid var(--grey-200);">' +
+              '<strong>' + completeSections + ' of ' + totalSections + ' section(s) complete.</strong>' +
+              (dueLabels.length ? ' Still due: ' + esc(dueLabels.join(', ')) + '.' : ' Nothing outstanding for this café.') +
+            '</div>' +
             (allDone
               ? '<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;margin-bottom:14px;border:1px solid var(--gold);">✓ Every section has already been fully submitted for ' + esc(sf.cafe) + '.</div>'
               : '') +
@@ -2151,8 +2187,21 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
         tracker.sections.forEach(function (sec) {
           var sel = wrap.querySelector('[data-section-select="' + sec.id + '"]');
-          if (!sel) return; // section already fully complete — no dropdown rendered
+          if (!sel) return; // section already fully complete with no room for extra entries — no dropdown rendered
           sel.addEventListener('change', function () { renderSectionEntries(sec, parseInt(sel.value, 10) || 0); });
+        });
+
+        // "+ Add another entry" reveal — only present on already-complete repeatable sections
+        // that still have room up to their maximum; keeps the optional dropdown hidden until the
+        // café explicitly asks for it, so a genuinely-done section never looks like it still owes
+        // something.
+        wrap.querySelectorAll('[data-add-extra]').forEach(function (btn) {
+          btn.onclick = function () {
+            var secId = btn.getAttribute('data-add-extra');
+            var extraWrap = document.getElementById('extraWrap-' + secId);
+            if (extraWrap) extraWrap.style.display = 'block';
+            btn.style.display = 'none';
+          };
         });
 
         document.getElementById('switchCafeBtn').onclick = renderCafePicker;
@@ -2180,7 +2229,19 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
             });
           });
 
-          if (!toSubmit.length) { errEl.innerHTML = '<div class="error-msg">Please complete at least one section before submitting.</div>'; return; }
+          // Nothing was selected this visit. If every section has already met its requirement,
+          // that's not an error — there's genuinely nothing left to send, and the café shouldn't
+          // be blocked with an error message when the launch is actually already fully submitted.
+          // This is the exact case that used to prevent reaching a final submission: every
+          // section complete, nothing new to add, yet the old code demanded at least one entry.
+          if (!toSubmit.length) {
+            if (allDone) {
+              errEl.innerHTML = '<div class="hint" style="background:var(--gold-light,#faf6ee);padding:10px 12px;border:1px solid var(--gold);">✓ Nothing further needed — every section for ' + esc(sf.cafe) + ' is already complete.</div>';
+            } else {
+              errEl.innerHTML = '<div class="error-msg">Please complete at least one outstanding section before submitting — still due: ' + esc(dueLabels.join(', ')) + '.</div>';
+            }
+            return;
+          }
           if (!disclaimerConfirmed) missing.push('Declaration confirmation');
           if (missing.length) { errEl.innerHTML = '<div class="error-msg">Please complete: ' + missing.join(', ') + '</div>'; return; }
 
