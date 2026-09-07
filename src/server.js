@@ -356,21 +356,31 @@ app.get('/api/trackers', requireAuth, async (req, res) => {
         COALESCE(s.flagged_count, 0)::int AS flagged_count
       FROM launch_trackers t
       LEFT JOIN (
+        -- Pre-aggregate to one row per café first (a café that submitted several section
+        -- occurrences, e.g. a sectioned launch, must still only count once), then a plain
+        -- COUNT(*)/COUNT(*) FILTER over that already-deduplicated set — this is the same
+        -- basis the café x task matrix and Insights use, so the dashboard card, Tracker
+        -- Detail badge, and Insights all agree on what "submitted" means for a launch.
         SELECT
           tracker_id,
           COUNT(*) AS submission_count,
-          COUNT(*) FILTER (
-            WHERE EXISTS (
-              SELECT 1 FROM jsonb_array_elements(answers) elem WHERE (elem->>'value')::boolean = false
-            )
-            OR (
-              conditional_triggered AND conditional_answers IS NOT NULL AND EXISTS (
-                SELECT 1 FROM jsonb_array_elements(conditional_answers) elem2 WHERE (elem2->>'value')::boolean = false
+          COUNT(*) FILTER (WHERE cafe_flagged) AS flagged_count
+        FROM (
+          SELECT
+            tracker_id,
+            LOWER(TRIM(cafe)) AS cafe_key,
+            BOOL_OR(
+              EXISTS (SELECT 1 FROM jsonb_array_elements(answers) elem WHERE (elem->>'value')::boolean = false)
+              OR (
+                conditional_triggered AND conditional_answers IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(conditional_answers) elem2 WHERE (elem2->>'value')::boolean = false
+                )
               )
-            )
-          ) AS flagged_count
-        FROM submissions
-        WHERE LOWER(TRIM(cafe)) <> 'test'
+            ) AS cafe_flagged
+          FROM submissions
+          WHERE LOWER(TRIM(cafe)) <> 'test'
+          GROUP BY tracker_id, LOWER(TRIM(cafe))
+        ) per_cafe
         GROUP BY tracker_id
       ) s ON s.tracker_id = t.id
       ORDER BY t.created_at DESC;
