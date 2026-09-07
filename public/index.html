@@ -570,11 +570,15 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
   function trackerCardHtml(t) {
     var statusPill = t.active ? '' : '<span class="pill archived">Archived</span>';
     var flagPill = t.flagged_count > 0 ? '<span class="pill flag">' + t.flagged_count + ' Flagged</span>' : '<span class="pill up">All Clear</span>';
+    // submission_count is now a distinct-café count (not a raw row count), so it reads correctly
+    // for sectioned launches too — a café that filled in 3 of 6 sections across two visits still
+    // counts as exactly 1 here, not 3.
+    var isSectioned = !!(t.sections && t.sections.length);
     return '<div class="tracker-card" id="card-' + t.id + '">' +
       '<div class="t-name">' + esc(t.name) + '</div>' +
       '<div class="t-desc">' + esc(t.description || '') + '</div>' +
       '<div class="t-stats">' +
-        '<div><div class="t-stat-value">' + t.submission_count + '</div><div class="t-stat-label">Submissions</div></div>' +
+        '<div><div class="t-stat-value">' + t.submission_count + '</div><div class="t-stat-label">' + (isSectioned ? 'Café(s) Engaged' : 'Submissions') + '</div></div>' +
         '<div>' + statusPill + ' ' + (t.submission_count > 0 ? flagPill : '') + '</div>' +
       '</div>' +
     '</div>';
@@ -1299,12 +1303,35 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
 
   function renderTrackerDetailContent(tracker, submissions) {
     var link = window.location.origin + '/launch/' + tracker.id;
-    var flagged = submissions.filter(isFlagged).length;
+    var isSectioned = !!(tracker.sections && tracker.sections.length);
+
+    // ---- Sectioned trackers: each row from the API is ONE section occurrence, not one café's
+    // whole submission — a café that filled in 3 of 6 sections across two visits shows up as 3
+    // separate raw rows. Group them back into one card per café here so the admin sees the same
+    // "one submission, built up over visits" picture the café themselves sees on the form, with
+    // every section (including ones never touched) represented — not just a fragment per row.
+    var badgeText;
+    var bodyHtml;
+    if (isSectioned) {
+      var groups = groupSubmissionsByCafe(submissions);
+      var completeCount = groups.filter(function (g) { return g.status === 'complete'; }).length;
+      var anyFlagged = groups.some(function (g) { return g.flagged; });
+      badgeText = groups.length + ' Café(s) Engaged · ' + completeCount + ' Complete' + (anyFlagged ? ' · Flagged' : '');
+      bodyHtml = !groups.length
+        ? '<div class="card empty-state">No submissions yet. Share the link above with each branch.</div>'
+        : groups.map(function (g) { return sectionedSubmissionCardHtml(g, tracker); }).join('');
+    } else {
+      var flagged = submissions.filter(isFlagged).length;
+      badgeText = submissions.length + ' Submitted' + (flagged ? ' · ' + flagged + ' Flagged' : '');
+      bodyHtml = !submissions.length
+        ? '<div class="card empty-state">No submissions yet. Share the link above with each branch.</div>'
+        : submissions.map(submissionCardHtml).join('');
+    }
 
     var html =
       '<div class="page-header">' +
         '<div><h1>' + esc(tracker.name) + '</h1><div class="sub">' + esc(tracker.description || 'Menu / product launch') + '</div></div>' +
-        '<span class="badge">' + submissions.length + ' Submitted' + (flagged ? ' · ' + flagged + ' Flagged' : '') + '</span>' +
+        '<span class="badge">' + esc(badgeText) + '</span>' +
       '</div>' +
       '<div class="card" style="margin-bottom:20px;">' +
         '<div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Submission Link — share with branches, no login required</div>' +
@@ -1313,13 +1340,8 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         '<button class="btn outline" id="duplicateTemplateBtn">Duplicate</button>' +
         '<button class="btn ' + (tracker.active ? 'outline' : 'gold') + '" id="toggleActiveBtn">' + (tracker.active ? 'Archive' : 'Reactivate') + '</button></div>' +
         '<div style="font-size:10px;color:var(--grey-500);margin-top:8px;">Public form title shown to branches: <strong>' + esc(tracker.form_title) + '</strong></div>' +
-      '</div>';
-
-    if (!submissions.length) {
-      html += '<div class="card empty-state">No submissions yet. Share the link above with each branch.</div>';
-    } else {
-      html += submissions.map(submissionCardHtml).join('');
-    }
+      '</div>' +
+      bodyHtml;
 
     document.getElementById('trackerDetail').innerHTML = html;
     document.getElementById('copyLinkBtn').onclick = function () {
@@ -1344,6 +1366,77 @@ body { margin: 0; font-family: var(--font); background: var(--grey-100); color: 
         }
       });
     });
+  }
+
+  // Mirrors the server's isSectionOccurrenceComplete — true once every item in this occurrence
+  // has a real answer (plus any required photo/date). Kept client-side so the raw Submissions
+  // view can show the same complete/in-progress read the café's own form and Insights use.
+  function clientSectionOccurrenceComplete(sec, answers) {
+    return (sec.items || []).every(function (it) {
+      var a = (answers || []).find(function (x) { return x.id === it.id; });
+      if (!a || a.value === null || a.value === undefined) return false;
+      if (it.requires_photo && !a.photo) return false;
+      if (it.requires_date && !a.date) return false;
+      return true;
+    });
+  }
+
+  // Rebuilds "one submission per café" from the raw per-section-occurrence rows the API returns
+  // for a sectioned tracker — same grouping the Insights/PDF café x task matrix uses, but keeping
+  // each row's actual answers (not just a status dot) since this is the detail-level view.
+  function groupSubmissionsByCafe(submissions) {
+    var byCafe = {};
+    var order = [];
+    submissions.forEach(function (s) {
+      var key = (s.cafe || '').trim().toLowerCase();
+      if (!byCafe[key]) { byCafe[key] = { cafe: s.cafe, rows: [] }; order.push(key); }
+      byCafe[key].rows.push(s);
+    });
+    return order.map(function (key) {
+      var g = byCafe[key];
+      var latest = g.rows.reduce(function (max, r) { return new Date(r.submitted_at) > new Date(max.submitted_at) ? r : max; }, g.rows[0]);
+      g.latestAt = latest.submitted_at;
+      g.latestBy = latest.submitted_by;
+      g.flagged = g.rows.some(function (r) { return (r.answers || []).some(function (a) { return a.value === false; }); });
+      return g;
+    });
+  }
+
+  // One café's consolidated card for a sectioned launch — every template section gets its own
+  // block (in template order), showing every occurrence submitted so far plus a clear "Not
+  // started" line for any section this café hasn't touched yet, so nothing is left implicit.
+  function sectionedSubmissionCardHtml(group, tracker) {
+    var flaggedBadge = group.flagged ? '<span class="pill flag">Flagged</span>' : '<span class="pill up">All Clear</span>';
+    var sectionsHtml = tracker.sections.map(function (sec) {
+      var rows = group.rows.filter(function (r) { return r.section_id === sec.id; }).sort(function (a, b) { return (a.occurrence || 1) - (b.occurrence || 1); });
+      if (!rows.length) {
+        return '<div style="border-top:1px solid var(--grey-200);padding-top:10px;margin-top:10px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;">' + esc(sec.label) + '</span>' +
+          '<span style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--grey-500);">Not Started</span></div>' +
+        '</div>';
+      }
+      var occurrencesHtml = rows.map(function (r) {
+        var complete = clientSectionOccurrenceComplete(sec, r.answers);
+        var occTag = sec.repeatable ? ' — Entry ' + (r.occurrence || 1) : '';
+        var answerRows = (r.answers || []).map(function (a) { return answerRowHtml(r.id, a); }).join('');
+        return '<div style="margin-top:8px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-size:11px;font-weight:600;color:var(--grey-700);">' + esc(sec.label + occTag) + '</span>' +
+            '<span style="font-size:9px;font-weight:700;text-transform:uppercase;color:' + (complete ? 'var(--green-ok)' : 'var(--gold)') + ';">' + (complete ? '✓ Complete' : 'In Progress') + '</span>' +
+          '</div>' +
+          '<div class="sub-answers" style="margin-top:4px;">' + answerRows + '</div>' +
+        '</div>';
+      }).join('');
+      return '<div style="border-top:1px solid var(--grey-200);padding-top:10px;margin-top:10px;">' + occurrencesHtml + '</div>';
+    }).join('');
+
+    return '<div class="sub-card">' +
+      '<div class="sub-top">' +
+        '<div><div class="sub-cafe">' + esc(group.cafe) + '</div><div class="sub-meta">' + esc(group.latestBy) + ' · last activity ' + fmtDate(group.latestAt) + '</div></div>' +
+        flaggedBadge +
+      '</div>' +
+      sectionsHtml +
+    '</div>';
   }
 
   function checkIcon(v) { return v ? '<span class="check-ok">✓ Yes</span>' : '<span class="check-bad">✕ No</span>'; }
