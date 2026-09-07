@@ -3,6 +3,29 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
+- **Fixed: cafés could not reach final submission once every section was actually complete.**
+  Root cause: a repeatable section (e.g. Training Proof: min 3, max 4) is only shown as
+  "✓ Complete" when the form's `canSubmitMore` flag is false — but that flag stays `true` the
+  moment a café has room for MORE entries up to the max, even after meeting the required minimum
+  (3 done, max is 4 → still "true"). So a section that had genuinely met its requirement kept
+  showing a mandatory-looking dropdown; a café that (reasonably) left it alone ended up selecting
+  nothing anywhere, and the old code treated "nothing selected" as an error — *"Please complete at
+  least one section before submitting"* — even when the launch was, in reality, fully done. This
+  was 100% front-end validation; the backend was never even reached.
+  - Section cards now check **completion status first**: a section that met its requirement always
+    shows ✓ Complete. If it's repeatable and still has room up to its max, an optional,
+    initially-collapsed **"+ Add another entry (optional)"** button reveals the extra dropdown —
+    it's clearly optional, and never blocks anything if left alone.
+  - Clicking Submit with nothing newly selected is no longer always an error: if every section is
+    genuinely complete, it now shows a plain confirmation ("✓ Nothing further needed…") instead of
+    blocking. If sections are still genuinely outstanding, the error message now names them
+    directly instead of the generic "at least one section" text.
+- **"What's still due" is now visible throughout the submission flow**, not just per-section:
+  - The submission form itself shows a summary line at the top — "X of Y section(s) complete" plus
+    "Still due: A, B, C" — before the café touches anything, so what's outstanding is obvious on
+    arrival rather than only discoverable by scanning every section's dropdown/checkmark.
+  - Each still-outstanding section card now carries a small "Still Due" tag next to its dropdown
+    for the same reason.
 - **Fixed: raw Submissions view and dashboard counts were misleading for sectioned (multi-step)
   launches.** Root cause: a sectioned launch stores one row per café **per section per visit** —
   a café that filled in 3 of 6 sections across two visits produced 3 raw rows, not 1. Three places
