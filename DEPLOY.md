@@ -3,6 +3,24 @@
 Same GitHub → Railway workflow you already use for the Ops Task Tracker.
 
 ## What's new in this update
+- **Fixed: raw Submissions view and dashboard counts were misleading for sectioned (multi-step)
+  launches.** Root cause: a sectioned launch stores one row per café **per section per visit** —
+  a café that filled in 3 of 6 sections across two visits produced 3 raw rows, not 1. Three places
+  read that raw table directly and displayed the row count as if it were a submission count:
+  - **Dashboard tracker card** ("Submissions" stat) — now counts distinct cafés engaged, labelled
+    "Café(s) Engaged" for sectioned launches. (Heritage Month Egg Box would have shown "12" for
+    2 cafés that had each submitted 6 section-rows; now correctly shows "2".)
+  - **Tracker Detail page badge** — same fix, plus a "X Complete" count using the same
+    all-sections-done definition Insights already uses.
+  - **Tracker Detail submission cards** — previously one disconnected card per section-occurrence
+    per café, with no section label shown, so a café's history across visits was scattered and
+    unreadable. Now grouped into one card per café, with every template section shown in order
+    (including a "Not Started" line for sections that café hasn't touched at all yet) and every
+    submitted occurrence shown underneath its section with a Complete/In Progress tag — the same
+    "skip some sections, finish others, come back later, it's all still one submission" model the
+    café-facing form and Insights already used, now consistent everywhere admins look.
+  Insights and the PDF export were already correct on this (they had their own café-grouping logic
+  from the start) — this fix brings the dashboard and Tracker Detail page in line with them.
 - **Café × Task Status matrix in Insights (multi-step launches)**: for any launch built from
   sections (Training Proof, B.Better, Collateral, GAAP POS, etc.), Insights now shows a grid with
   every assigned café down the side and every task across the top — a coloured dot per cell
@@ -47,8 +65,9 @@ Same GitHub → Railway workflow you already use for the Ops Task Tracker.
   the updated declaration text.
 
 This is a **database-safe update** — every change here is either purely client-side (photo
-picker, +/− toggle), a display-layer fix (Insights/PDF gating), or a new *computed* field added to
-the existing Insights API response (the café × task matrix — derived from data already stored,
+picker, +/− toggle), a display-layer fix (Insights/PDF gating, the raw-submissions-view grouping
+fix), or a new *computed* field/query added to the existing Insights and Trackers-list APIs (the
+café × task matrix, the distinct-café counting fix — both derived from data already stored,
 nothing new to migrate). Nothing touches the database schema or existing data. Just push the code.
 
 ### Building a template with mixed sections
